@@ -3694,7 +3694,17 @@ the same leases, room, drafts and Publish as [Editing](#editing).
   not made either, the page says "Not connected. Try again in a moment.", and nothing else waits
   for it; typing that waits for a lease (a block taken again after a reconnect, or typing kept
   from a closed block) is asked for again once the draft is back. So does an Enter or typing that cannot be sent; after an Enter the block stays open
-  with what was typed, still waiting to be sent. A block whose text is cleared where its empty
+  with what was typed, still waiting to be sent. A block open when the
+  connection drops, or when the room merges a version into the draft, is taken again in place
+  where the draft holds a text the room may have of it: after a merge, the text the room
+  acknowledged; after a dropped socket, the text sent last (it may have arrived without its
+  answer), the text acknowledged (the room kept running) or the text last written to D1 (the room
+  was reloaded). Only when none of them is there does what was typed go in as a new block, so a
+  table, a list or a paragraph edited just before a reconnect is never written twice. The frame
+  reports typing still on its way (in the send delay, or sent and not acknowledged) as `pending`,
+  and every publish waits for it, at most 3 s, so a version made with a block open has every
+  keystroke; the save status leaves "Saving…" as soon as nothing is on its way, also after a
+  keystroke that changes no Markdown (a trailing space). A block whose text is cleared where its empty
   lines would run the blocks around it together is removed at once, by the same one edit as
   "Delete" (the list after it takes another marker), under one lease over its lines and the lines
   that edit writes again. The doc then has what the page shows at every moment, so a Publish,

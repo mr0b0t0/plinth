@@ -430,6 +430,8 @@ interface OpResult {
 interface Want extends LineRange {
   /** The block's text when asked for, to find it again if the lines moved meanwhile. */
   text: string;
+  /** Other texts the block may have in the draft, tried after `text` (see lost()). */
+  also?: string[];
   insert: boolean;
   /** Text to keep and send once granted (a block re-taken after a reconnect). */
   keep?: string;
@@ -799,12 +801,14 @@ export class DocEditor {
    * wrote as the block's own Markdown (`core`, at line `near`), and whether its block is still
    * open. A refusal that arrives once the block has closed keeps that text, parked (roomRefused).
    * Closed is the editor's own record: the room's `released` comes only after the answer to the
-   * send, so the lease is still `mine` when a refusal of it arrives.
+   * send, so the lease is still `mine` when a refusal of it arrives. `text` is the lease's lines as
+   * sent, which the room may hold when its socket closes before the answer (lost()).
    */
   private lastSend: {
     seq: number;
     lease: string;
     core: string;
+    text?: string;
     near: number;
     open: boolean;
   } | null = null;
@@ -839,6 +843,20 @@ export class DocEditor {
       this.want?.kept === true ||
       this.stuck ||
       this.rescues.size > 0
+    );
+  }
+
+  /**
+   * A change is on its way to the draft: typing in the send delay, a cleared block's removal, or
+   * typing waiting for a lease to be written with (a block to take again, a closed block's typing).
+   * Publish waits for it (the frame's `pending`), so a version never leaves out the last keystrokes.
+   */
+  get sending(): boolean {
+    return (
+      this.timer !== null ||
+      this.clearing !== null ||
+      this.want?.kept === true ||
+      this.want?.keep !== undefined
     );
   }
 
@@ -2279,8 +2297,14 @@ export class DocEditor {
       if (!this.request(p)) this.want = w.kept ? { ...next, tries: 0 } : null;
       return;
     }
-    const n = w.text === "" ? 0 : w.text.split("\n").length;
-    const at = w.insert ? Math.min(w.start, b.lines.length) : locateBlock(b.lines, w.text, w.start);
+    let text = w.text;
+    let at = w.insert ? Math.min(w.start, b.lines.length) : locateBlock(b.lines, text, w.start);
+    for (const other of w.insert ? [] : (w.also ?? [])) {
+      if (at >= 0) break;
+      at = locateBlock(b.lines, other, w.start);
+      if (at >= 0) text = other;
+    }
+    const n = text === "" ? 0 : text.split("\n").length;
     if (at < 0) {
       // Its text is gone from the draft (someone changed it): put it back as a new block.
       const near = Math.min(w.start, b.lines.length);
@@ -2293,7 +2317,7 @@ export class DocEditor {
       if (!this.request(next)) this.want = w.keep !== undefined ? { ...w, tries: 0 } : null;
       return;
     }
-    const next = { ...w, start: at, end: w.insert ? at : at + n, tries: w.tries + 1 };
+    const next = { ...w, text, start: at, end: w.insert ? at : at + n, tries: w.tries + 1 };
     this.want = next;
     // Not connected: a block with text to keep is tried again once the draft is back.
     if (!this.request(next)) this.want = w.keep !== undefined ? { ...w, tries: 0 } : null;
@@ -2384,13 +2408,27 @@ export class DocEditor {
       return;
     }
     if (reason === "reconnect" || reason === "rebased") {
-      // Keep the text and take the block again once the draft is back.
-      const text = reason === "reconnect" ? this.backend.durableText : this.backend.ackedText;
+      // Keep the text and take the block again once the draft is back. It is looked for by each
+      // text the room may hold of it: after a merge, what the room acked of it; after a dropped
+      // socket, the text sent last (it may have arrived without its answer), the text acked (the
+      // room kept running) or the text last written to D1 (the room was evicted meanwhile). So it
+      // is taken again in place, never written a second time as a new block beside its own lines.
+      const b = this.backend;
+      const last = this.lastSend;
+      const sent =
+        reason === "reconnect" && last?.text !== undefined && !(b.acked?.(last.seq) ?? true)
+          ? last.text
+          : null;
+      const texts = (reason === "reconnect" ? [sent, b.ackedText, b.durableText] : [b.ackedText])
+        .filter((t): t is string => t !== null)
+        .filter((t, i, all) => all.indexOf(t) === i);
+      const text = texts[0] ?? "";
       this.want = {
         start: held.start,
         end: held.end,
-        text: text ?? "",
-        insert: (text ?? "") === "",
+        text,
+        ...(texts.length > 1 ? { also: texts.slice(1) } : {}),
+        insert: text === "",
         keep: this.currentText() ?? "",
         tries: 0,
       };
@@ -2626,6 +2664,10 @@ export class DocEditor {
     this.timer = setTimeout(() => {
       this.timer = null;
       this.send();
+      // The app is told the send delay is over whatever the send did: a keystroke that leaves the
+      // block's Markdown as it was (a trailing space) sends nothing and hears nothing back, and
+      // the save status would otherwise go on saying the typing is on its way.
+      this.hooks.status();
     }, ms);
     this.hooks.status();
   }
@@ -2692,7 +2734,7 @@ export class DocEditor {
     const refusal =
       this.unsendable(lines, mine, text) ?? (this.backend.edit(text) ? null : NOT_SENT);
     if (refusal) return stick(refusal);
-    this.noteSent(mine, verifyBlock(this.open.rich.model, TOOLS, this.open.env) ?? "");
+    this.noteSent(mine, verifyBlock(this.open.rich.model, TOOLS, this.open.env) ?? "", text);
     // Every accepted send from a block with a rescue copy replaces what that copy waits for.
     this.rescueSent(this.blockRescue, this.backend.lastSeq ?? null, mine.start, text);
     return true;
@@ -2975,11 +3017,18 @@ export class DocEditor {
    * A block send the room took into its socket (`lease`, writing `core`): kept until it is
    * acknowledged, for a refusal that comes once the block has closed. Rooms only.
    */
-  private noteSent(lease: ClientLease, core: string): void {
+  private noteSent(lease: ClientLease, core: string, text?: string): void {
     const b = this.backend;
     this.lastSend =
       b.acked && b.lastSeq !== undefined
-        ? { seq: b.lastSeq, lease: lease.id, core, near: lease.start, open: true }
+        ? {
+            seq: b.lastSeq,
+            lease: lease.id,
+            core,
+            ...(text !== undefined ? { text } : {}),
+            near: lease.start,
+            open: true,
+          }
         : null;
   }
 
