@@ -93,55 +93,81 @@ export async function readHookInput(stream = process.stdin) {
 }
 
 /** The session id each client puts in its hook input. */
-export function sessionIdOf(client, input) {
+export function sessionIdOf(client, input, env = process.env) {
   const raw =
     client === "cursor"
       ? (input.conversation_id ?? input.session_id)
       : client === "copilot"
         ? (input.sessionId ?? input.session_id)
-        : input.session_id;
+        : client === "gemini"
+          ? (input.session_id ?? env.GEMINI_SESSION_ID)
+          : input.session_id;
   return typeof raw === "string" && SAFE_ID.test(raw) ? raw : null;
 }
 
-/** Plinth's publish and update tools, whatever the client calls the server. */
+/**
+ * Plinth's publish and update tools, whatever the client calls the server: mcp__plinth__… (Claude
+ * Code, Codex), mcp__plugin_plinth_plinth__… (Claude Code plugin), plinth-… (Copilot CLI),
+ * mcp_plinth_… (Gemini), MCP:… (Cursor).
+ */
 export function isPublishTool(name) {
-  return typeof name === "string" && /(^|[_\-.])(publish_artifact|update_artifact)$/.test(name);
+  return typeof name === "string" && /(^|[_\-.:])(publish_artifact|update_artifact)$/.test(name);
 }
 
-/** The text of a tool's result, in each client's shape. */
-function toolText(input) {
-  const r = input.tool_response ?? input.toolResult ?? input.tool_output ?? input.tool_result;
-  const parts = [];
-  const take = (v) => {
-    if (typeof v === "string") parts.push(v);
-    else if (Array.isArray(v)) for (const x of v) take(x);
-    else if (v && typeof v === "object") {
-      if (typeof v.text === "string") parts.push(v.text);
-      if (typeof v.textResultForLlm === "string") parts.push(v.textResultForLlm);
-      if (v.content !== undefined) take(v.content);
-      if (typeof v.output === "string") parts.push(v.output);
-    }
-  };
-  take(r);
-  return parts.join("\n");
-}
+/** The tool name in each client's hook input. */
+const toolNameOf = (input) => input.tool_name ?? input.toolName ?? input.tool ?? null;
 
 /**
- * The artifact a publish or update result names: its `id`, read from the result's JSON. Null for
- * a refused call (an error body has no id) or anything else.
+ * The artifact a publish or update result names: the `id` of a JSON object that also has `url`,
+ * found anywhere in the hook input's tool result (clients wrap it differently: an MCP content
+ * array, a JSON string, Copilot's textResultForLlm). Null for a refused call (an error body has no
+ * url) or anything else.
  */
 export function publishedArtifact(input) {
-  const name = input.tool_name ?? input.toolName;
-  if (!isPublishTool(name)) return null;
-  const text = toolText(input);
-  for (const candidate of [text, ...text.split("\n\n")]) {
+  if (!isPublishTool(toolNameOf(input))) return null;
+  const result =
+    input.tool_response ??
+    input.toolResult ??
+    input.tool_output ??
+    input.tool_result ??
+    input.result;
+  return findPublished(result, 0);
+}
+
+function findPublished(v, depth) {
+  if (depth > 6 || v === null || v === undefined) return null;
+  if (typeof v === "string") {
+    const t = v.trim();
+    if (!t.startsWith("{") && !t.startsWith("[")) return null;
     try {
-      const body = JSON.parse(candidate);
-      if (body && typeof body.id === "string" && SAFE_ID.test(body.id) && body.url) return body.id;
-    } catch {}
+      return findPublished(JSON.parse(t), depth + 1);
+    } catch {
+      return null;
+    }
   }
-  const m = /"id":\s*"([A-Za-z0-9_-]{1,64})"[\s\S]*"url":/.exec(text);
-  return m ? m[1] : null;
+  if (Array.isArray(v)) {
+    for (const x of v) {
+      const id = findPublished(x, depth + 1);
+      if (id) return id;
+    }
+    return null;
+  }
+  if (typeof v === "object") {
+    if (typeof v.id === "string" && SAFE_ID.test(v.id) && typeof v.url === "string") return v.id;
+    for (const k of [
+      "content",
+      "text",
+      "textResultForLlm",
+      "structuredContent",
+      "output",
+      "llmContent",
+      "result",
+    ]) {
+      const id = findPublished(v[k], depth + 1);
+      if (id) return id;
+    }
+  }
+  return null;
 }
 
 /**
@@ -361,7 +387,8 @@ export function relayRunning(dir) {
 
 /** Start the relay process, detached, unless one runs. The script path is plinth-mentions.mjs. */
 export function ensureRelay(dir, script, env = process.env) {
-  if (relayRunning(dir)) return false;
+  // Tests (and anyone who runs the relay some other way) can keep hooks from starting one.
+  if (env.PLINTH_RELAY_NO_SPAWN === "1" || relayRunning(dir)) return false;
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const child = spawn(process.execPath, [script, "relay"], {
     detached: true,

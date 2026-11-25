@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "command": "command -v node >/dev/null 2>&1 && node \"${CURSOR_PLUGIN_ROOT}/scripts/plinth-mentions.mjs\" hook cursor session-start 2>/dev/null; exit 0",
+        "timeout": 15
+      }
+    ],
+    "postToolUse": [
+      {
+        "command": "command -v node >/dev/null 2>&1 && node \"${CURSOR_PLUGIN_ROOT}/scripts/plinth-mentions.mjs\" hook cursor post-tool 2>/dev/null; exit 0",
+        "matcher": "MCP:(publish_artifact|update_artifact)",
+        "timeout": 15
+      }
+    ],
+    "stop": [
+      {
+        "command": "command -v node >/dev/null 2>&1 && node \"${CURSOR_PLUGIN_ROOT}/scripts/plinth-mentions.mjs\" hook cursor stop 2>/dev/null; exit 0",
+        "timeout": 15,
+        "loop_limit": 3
+      }
+    ],
+    "sessionEnd": [
+      {
+        "command": "command -v node >/dev/null 2>&1 && node \"${CURSOR_PLUGIN_ROOT}/scripts/plinth-mentions.mjs\" hook cursor session-end 2>/dev/null; exit 0",
+        "timeout": 10
+      }
+    ]
+  }
+}

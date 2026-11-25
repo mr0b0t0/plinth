@@ -1,38 +1,39 @@
 #!/usr/bin/env node
-// Plinth mention watcher. A background monitor in the Claude Code plugin runs `watch`: every
-// POLL_MS it asks Plinth for pending @mention requests and prints one line when new ones arrive,
-// which wakes the Claude Code session so it can handle them through the Plinth MCP tools.
+// Plinth's mention relay on this computer (docs/spec.md "Mention wake-ups"): brings comments that
+// @mention the user's agents to their open sessions, in every client the Plinth integrations cover.
 //
-// It cannot use Claude Code's own MCP login (Claude Code keeps that token to itself), so it has a
+// It cannot use a client's own MCP login (clients keep their tokens to themselves), so it has a
 // connection of its own: `login` runs a one-time OAuth approval in the browser (dynamic client
-// registration, PKCE, a loopback redirect) asking only for the `mentions` scope. That token can
-// list and claim mention tasks; it cannot read or change artifacts. The OAuth client is
-// plinth-oauth.mjs, shared with the `plinth` CLI; it sends `plinth-mentions/<plugin version>` as
-// the User-Agent.
+// registration, PKCE, a loopback redirect) asking only for the `mentions:watch` scope. That token
+// sees that requests wait (task and artifact ids) and starts relay watches; it can't read comments
+// or artifacts, or claim tasks. Connections made before that scope existed hold `mentions` and hear
+// @claude only. PLINTH_MENTIONS_TOKEN gives a computer without a browser a fixed token instead.
+// The OAuth client is plinth-oauth.mjs, shared with the `plinth` CLI; it sends
+// `plinth-mentions/<plugin version>` as the User-Agent.
 //
-//   node plinth-mentions.mjs login    connect (opens the browser once)
-//   node plinth-mentions.mjs watch    poll and announce (what the plugin monitor runs)
-//   node plinth-mentions.mjs pending  print what is waiting now, if anything (the SessionStart hook)
-//   node plinth-mentions.mjs status   say whether it is connected
-//   node plinth-mentions.mjs logout   revoke and forget the connection
+//   node plinth-mentions.mjs login                 connect (opens the browser once)
+//   node plinth-mentions.mjs watch                 Claude Code's monitor: a catch-all watch whose
+//                                                  offers print one line each, waking the session
+//   node plinth-mentions.mjs pending               Claude Code's session start: what waits now
+//   node plinth-mentions.mjs hook <client> <event> every client's hooks (plinth-relay.mjs)
+//   node plinth-mentions.mjs relay                 the relay process the hooks start
+//   node plinth-mentions.mjs status | logout       say whether it is connected; revoke and forget it
 //
-// Which instance: PLINTH_URL, else the plugin's Plinth instance option, else the hosted one. Claude
-// Code gives the option to hooks only (CLAUDE_PLUGIN_OPTION_INSTANCE_URL), so `pending`, which the
-// SessionStart hook runs, saves it in the plugin's data folder (CLAUDE_PLUGIN_DATA), where `watch`
-// (the monitor) and the commands of the watch-mentions skill read it. `watch` reads it again on
-// every poll, so a monitor that started before the hook saved it catches up.
+// Which instance: PLINTH_URL, else the Claude Code plugin's Plinth instance option, else the hosted
+// one. Claude Code gives the option to hooks only (CLAUDE_PLUGIN_OPTION_INSTANCE_URL), so the
+// session-start hook saves it in the plugin's data folder (CLAUDE_PLUGIN_DATA), where the monitor
+// and the watch-mentions skill's commands read it. `watch` reads it again on every poll.
 //
-// State lives in $XDG_CONFIG_HOME/plinth (default ~/.config/plinth), one file per instance, mode
-// 0600. Several Claude Code sessions share it, so:
-// - refresh happens under a lock and re-reads the file first: Plinth rotates refresh tokens and
-//   revokes the grant if an old one is presented again, so two sessions must never both use one;
-// - each mention is announced once per machine (an exclusive file per task id), not once per open
-//   session, so one session wakes for it instead of all of them.
+// State lives in $XDG_CONFIG_HOME/plinth (default ~/.config/plinth), mode 0600. Several sessions
+// and clients share it, so a refresh happens under a lock and re-reads the file first (Plinth
+// rotates refresh tokens and revokes the grant if an old one is presented again). Plinth hands each
+// request to one session's watch at a time; on top of that each request is announced once per
+// computer (an exclusive marker file per task id).
 //
 // What it prints is built from server ids only, never from comment or artifact text (which other
-// people write): Claude reads the request itself with list_mentions, whose description marks it as
-// untrusted. Plain Node (18+), no dependencies. Source: integrations/watcher/; the plugin gets a
-// copy of both files from scripts/integrations.mjs.
+// people write): the agent reads the request itself with claim_mention, whose result marks it as
+// untrusted. Plain Node (18+), no dependencies. Source: integrations/watcher/; the plugins get
+// copies from scripts/integrations.mjs.
 import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { configDir, createOAuth, hostKey, normalizeOrigin } from "./plinth-oauth.mjs";
@@ -64,7 +65,7 @@ export const CLIENT_NAME = "Plinth mention relay";
  * existed hold `mentions`, which Plinth lets watch for their own client type (@claude) only.
  */
 export const SCOPE = "mentions:watch";
-const POLL_MS = Number(process.env.PLINTH_MENTIONS_POLL_MS) || 30_000;
+const POLL_MS = Number(process.env.PLINTH_MENTIONS_POLL_MS) || 15_000;
 const MAX_BACKOFF_MS = 5 * 60_000;
 /** Announcement markers older than this are swept once their task is no longer pending. */
 const MARKER_KEEP_MS = 24 * 60 * 60_000;
@@ -347,9 +348,22 @@ async function watch(oauth) {
           if (fresh.length > 0) console.log(announcement(fresh));
         }
       } else if (watchId) {
-        warnedSignedOut = false;
         const r = await call("POST", "/mention-watches/poll", { ids: [watchId] });
-        if (r?.status !== 200) throw new Error(`Plinth answered ${r?.status ?? "nothing"}`);
+        if (!r) {
+          // Signed out (revoked or expired): say so once, then wait for a new connection.
+          watchId = null;
+          if (oauth.readState(base)?.signed_out === true && !warnedSignedOut) {
+            console.log(
+              "Plinth: the mention relay lost its connection (revoked or expired). " +
+                "Run /plinth:watch-mentions to reconnect it.",
+            );
+            warnedSignedOut = true;
+          }
+          await sleep(delay);
+          continue;
+        }
+        warnedSignedOut = false;
+        if (r.status !== 200) throw new Error(`Plinth answered ${r.status}`);
         const w = (r.body?.watches ?? [])[0];
         if (w?.status !== "working") watchId = null;
         const offers = w?.offers ?? [];
@@ -376,18 +390,22 @@ async function watch(oauth) {
 
 // ---------- hooks for every client (the mention relay, plinth-relay.mjs) ----------
 
-/** What a hook prints so its client adds `text` to the conversation, or asks for another turn. */
+/**
+ * What a hook prints so its client adds `text` to the conversation (session start, after a tool),
+ * or asks for one more turn (stop). Each client's own shape.
+ */
 export function hookOutput(client, event, text) {
   if (!text) return "";
   if (event === "stop") {
     if (client === "cursor") return JSON.stringify({ followup_message: text });
-    // Codex, Copilot CLI, Gemini and Claude Code: block the stop, with the reason as the prompt.
+    // Codex, Copilot CLI, Gemini (AfterAgent) and Claude Code: block the stop; the reason is the prompt.
     return JSON.stringify({ decision: "block", reason: text });
   }
-  const hookEventName = event === "session-start" ? "SessionStart" : "PostToolUse";
   if (client === "cursor") return JSON.stringify({ additional_context: text });
   if (client === "copilot") return JSON.stringify({ additionalContext: text });
   if (client === "claude" && event === "session-start") return text;
+  const hookEventName =
+    event === "session-start" ? "SessionStart" : client === "gemini" ? "AfterTool" : "PostToolUse";
   return JSON.stringify({ hookSpecificOutput: { hookEventName, additionalContext: text } });
 }
 
@@ -443,7 +461,11 @@ async function hook(oauth, client, event) {
     if (s.watches[key]) return;
     const r = await startWatch(call, s, artifact);
     if (r.id) s.watches[key] = r.id;
-    else if (r.error === "not_connected" || r.error === "scope") note = connectNote(r.error);
+    // Say how to connect when it matters (after a publish), once per session.
+    else if ((r.error === "not_connected" || r.error === "scope") && artifact && !s.connect_noted) {
+      note = connectNote(r.error);
+      s.connect_noted = true;
+    }
   };
 
   if (event === "session-start") {
@@ -482,8 +504,9 @@ async function relay(oauth) {
 async function login(oauth, base) {
   await oauth.login(base, { noBrowser: Boolean(process.env.PLINTH_MENTIONS_NO_BROWSER) });
   console.log(
-    `Connected the mention watcher to ${base} (scope: ${SCOPE}). Open Claude Code sessions will ` +
-      "hear about new @mentions within about 30 seconds. Revoke it any time on the Connections page.",
+    `Connected Plinth's mention relay to ${base} (scope: ${SCOPE}). Comments that mention your ` +
+      "agents will reach your open sessions on this computer within about 15 seconds. Revoke it " +
+      "any time on the Connections page.",
   );
 }
 
@@ -494,7 +517,9 @@ async function logout(oauth, base) {
 
 function status(oauth, base) {
   const s = oauth.readState(base);
-  if (!s) console.log(`Not connected to ${base}. Run: node plinth-mentions.mjs login`);
+  if (!s && process.env.PLINTH_MENTIONS_TOKEN)
+    console.log(`Using PLINTH_MENTIONS_TOKEN for ${base}.`);
+  else if (!s) console.log(`Not connected to ${base}. Run: node plinth-mentions.mjs login`);
   else if (s.signed_out)
     console.log(`Signed out of ${base} (revoked or expired). Run login again.`);
   else console.log(`Connected to ${base} since ${s.connected_at}.`);

@@ -92,7 +92,8 @@ test("an editor pins a mention, the owner's agent completes it, the panel shows 
   await expect(thread).toBeVisible();
   const chip = thread.locator('[data-state="pending"]');
   await expect(chip).toContainText("@claude");
-  await expect(chip).toContainText("pending");
+  // No session watches it yet: the chip says the request is waiting for one.
+  await expect(chip).toContainText("waiting");
   // The pin lands over the frame, not over the whole page.
   const pin = page.getByTestId("comment-pins").getByRole("button", { name: /^Comment 1/ });
   if (info.project.name !== "mobile") {

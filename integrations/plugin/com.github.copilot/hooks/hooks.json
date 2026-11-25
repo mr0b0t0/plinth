@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "type": "command",
+        "bash": "command -v node >/dev/null 2>&1 && node \"$PLUGIN_ROOT/scripts/plinth-mentions.mjs\" hook copilot session-start 2>/dev/null; exit 0",
+        "timeoutSec": 15
+      }
+    ],
+    "postToolUse": [
+      {
+        "type": "command",
+        "matcher": ".*(publish_artifact|update_artifact)",
+        "bash": "command -v node >/dev/null 2>&1 && node \"$PLUGIN_ROOT/scripts/plinth-mentions.mjs\" hook copilot post-tool 2>/dev/null; exit 0",
+        "timeoutSec": 15
+      }
+    ],
+    "agentStop": [
+      {
+        "type": "command",
+        "bash": "command -v node >/dev/null 2>&1 && node \"$PLUGIN_ROOT/scripts/plinth-mentions.mjs\" hook copilot stop 2>/dev/null; exit 0",
+        "timeoutSec": 15
+      }
+    ],
+    "sessionEnd": [
+      {
+        "type": "command",
+        "bash": "command -v node >/dev/null 2>&1 && node \"$PLUGIN_ROOT/scripts/plinth-mentions.mjs\" hook copilot session-end 2>/dev/null; exit 0",
+        "timeoutSec": 10
+      }
+    ]
+  }
+}

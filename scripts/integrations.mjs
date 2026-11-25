@@ -214,6 +214,94 @@ outputs.set(
     },
   }),
 );
+// ---------- The mention relay's hooks in other clients (docs/spec.md "Mention wake-ups") ----------
+// Each client runs `plinth-mentions.mjs hook <client> <event>` from its own hooks file, in its own
+// format, with the scripts copied next to it. The client is named in the command: Codex and
+// Copilot also set CLAUDE_PLUGIN_ROOT, so an environment variable can't tell them apart.
+const relayScripts = (dir) => {
+  outputs.set(`${dir}/scripts/plinth-mentions.mjs`, watcherSource("plinth-mentions.mjs"));
+  outputs.set(`${dir}/scripts/plinth-relay.mjs`, watcherSource("plinth-relay.mjs"));
+  outputs.set(`${dir}/scripts/plinth-oauth.mjs`, watcherSource("plinth-oauth.mjs"));
+};
+const relayHook = (root, client, event) =>
+  `command -v node >/dev/null 2>&1 && node "${root}/scripts/plinth-mentions.mjs" hook ${client} ${event} 2>/dev/null; exit 0`;
+
+// Copilot CLI installs integrations/plugin and reads plugin hooks from its namespace folder
+// (com.github.copilot/hooks/hooks.json), in its own format. Hooks run from the plugin root.
+outputs.set(
+  "integrations/plugin/com.github.copilot/hooks/hooks.json",
+  json({
+    version: 1,
+    hooks: {
+      sessionStart: [
+        {
+          type: "command",
+          bash: relayHook("$PLUGIN_ROOT", "copilot", "session-start"),
+          timeoutSec: 15,
+        },
+      ],
+      postToolUse: [
+        {
+          type: "command",
+          matcher: ".*(publish_artifact|update_artifact)",
+          bash: relayHook("$PLUGIN_ROOT", "copilot", "post-tool"),
+          timeoutSec: 15,
+        },
+      ],
+      agentStop: [
+        { type: "command", bash: relayHook("$PLUGIN_ROOT", "copilot", "stop"), timeoutSec: 15 },
+      ],
+      sessionEnd: [
+        {
+          type: "command",
+          bash: relayHook("$PLUGIN_ROOT", "copilot", "session-end"),
+          timeoutSec: 10,
+        },
+      ],
+    },
+  }),
+);
+
+// Codex: its own plugin folder with a .codex-plugin manifest, so its hooks load (Codex asks the
+// person to review them once, in /hooks). Same skill and hosted server as the portable plugin.
+const CODEX = "integrations/plugin-codex";
+outputs.set(
+  `${CODEX}/.codex-plugin/plugin.json`,
+  json({
+    name: PLUGIN.name,
+    version: PLUGIN.version,
+    description: PLUGIN.description,
+    keywords: [...PLUGIN.keywords],
+    skills: "./skills/",
+    mcpServers: "./.mcp.json",
+    hooks: "./hooks/hooks.json",
+    interface: reg.CODEX_INTERFACE,
+  }),
+);
+outputs.set(`${CODEX}/.mcp.json`, json({ mcpServers: { [SERVER_NAME]: { url: hostedMcp } } }));
+const codexHook = (event, matcher) => ({
+  ...(matcher ? { matcher } : {}),
+  hooks: [{ type: "command", command: relayHook("$PLUGIN_ROOT", "codex", event), timeout: 15 }],
+});
+outputs.set(
+  `${CODEX}/hooks/hooks.json`,
+  json({
+    description:
+      "Plinth's mention relay: bring comments that mention this agent to the Codex session that published the artifact",
+    hooks: {
+      SessionStart: [codexHook("session-start", "startup|resume|clear")],
+      PostToolUse: [codexHook("post-tool", "mcp__.*__(publish_artifact|update_artifact)")],
+      SessionEnd: [codexHook("session-end")],
+    },
+  }),
+);
+relayScripts(CODEX);
+setSkillFolder(`${CODEX}/skills/${SKILL_NAME}`, skill);
+outputs.set(
+  `${CODEX}/skills/watch-mentions/SKILL.md`,
+  readFileSync(path.join(root, "integrations/watcher/watch-mentions/SKILL.md"), "utf8"),
+);
+
 outputs.set(
   "integrations/plugin/mcp.json",
   json({
@@ -254,7 +342,9 @@ outputs.set(
     plugins: [
       {
         name: PLUGIN.name,
-        source: { source: "local", path: "./integrations/plugin" },
+        // Codex reads hooks only from a plugin with its own manifest (.codex-plugin), never from
+        // an Agent Plugins one, so it gets the folder built below.
+        source: { source: "local", path: "./integrations/plugin-codex" },
         policy: { installation: "AVAILABLE", authentication: "ON_INSTALL" },
         category: "Productivity",
       },
@@ -267,6 +357,7 @@ outputs.set(
   "integrations/plugin/assets/icon.svg",
   readFileSync(path.join(root, "integrations/assets/icon.svg"), "utf8"),
 );
+outputs.set(`${CODEX}/assets/icon.svg`, outputs.get("integrations/plugin/assets/icon.svg"));
 
 // ---------- Claude Code plugin directory build ----------
 // Anthropic's plugin directory accepts hooks, monitors and scripts only from verified
@@ -414,6 +505,36 @@ setSkillFolder(
   ),
 );
 outputs.set(`${CURSOR}/assets/icon.svg`, outputs.get("integrations/plugin/assets/icon.svg"));
+// Cursor finds hooks/hooks.json in a plugin; command hooks run from the plugin folder.
+relayScripts(CURSOR);
+outputs.set(
+  `${CURSOR}/hooks/hooks.json`,
+  json({
+    version: 1,
+    hooks: {
+      sessionStart: [
+        { command: relayHook("${CURSOR_PLUGIN_ROOT}", "cursor", "session-start"), timeout: 15 },
+      ],
+      postToolUse: [
+        {
+          command: relayHook("${CURSOR_PLUGIN_ROOT}", "cursor", "post-tool"),
+          matcher: "MCP:(publish_artifact|update_artifact)",
+          timeout: 15,
+        },
+      ],
+      stop: [
+        {
+          command: relayHook("${CURSOR_PLUGIN_ROOT}", "cursor", "stop"),
+          timeout: 15,
+          loop_limit: 3,
+        },
+      ],
+      sessionEnd: [
+        { command: relayHook("${CURSOR_PLUGIN_ROOT}", "cursor", "session-end"), timeout: 10 },
+      ],
+    },
+  }),
+);
 
 // ---------- Gemini CLI extension ----------
 outputs.set(
@@ -431,6 +552,29 @@ outputs.set(
   `<!-- ${GENERATED} -->\n# Plinth\n\nThe \`${SERVER_NAME}\` MCP server publishes HTML pages ("artifacts") for the user on Plinth.\nWhen you make a page, publish, update or share one, or address comments on one, follow the\n\`${SKILL_NAME}\` skill bundled with this extension.\n`,
 );
 setSkillFolder(`integrations/gemini/skills/${SKILL_NAME}`, skill);
+// Gemini CLI loads <extension>/hooks/hooks.json (timeouts in milliseconds; ${extensionPath}).
+relayScripts("integrations/gemini");
+const geminiHook = (event, matcher) => ({
+  ...(matcher ? { matcher } : {}),
+  hooks: [
+    {
+      type: "command",
+      command: relayHook("${extensionPath}", "gemini", event),
+      timeout: 15_000,
+    },
+  ],
+});
+outputs.set(
+  "integrations/gemini/hooks/hooks.json",
+  json({
+    hooks: {
+      SessionStart: [geminiHook("session-start")],
+      AfterTool: [geminiHook("post-tool", ".*(publish_artifact|update_artifact)")],
+      AfterAgent: [geminiHook("stop")],
+      SessionEnd: [geminiHook("session-end")],
+    },
+  }),
+);
 
 // ---------- Cursor rule (agent-requested) ----------
 outputs.set(

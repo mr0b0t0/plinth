@@ -1,0 +1,49 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v node >/dev/null 2>&1 && node \"${extensionPath}/scripts/plinth-mentions.mjs\" hook gemini session-start 2>/dev/null; exit 0",
+            "timeout": 15000
+          }
+        ]
+      }
+    ],
+    "AfterTool": [
+      {
+        "matcher": ".*(publish_artifact|update_artifact)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v node >/dev/null 2>&1 && node \"${extensionPath}/scripts/plinth-mentions.mjs\" hook gemini post-tool 2>/dev/null; exit 0",
+            "timeout": 15000
+          }
+        ]
+      }
+    ],
+    "AfterAgent": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v node >/dev/null 2>&1 && node \"${extensionPath}/scripts/plinth-mentions.mjs\" hook gemini stop 2>/dev/null; exit 0",
+            "timeout": 15000
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v node >/dev/null 2>&1 && node \"${extensionPath}/scripts/plinth-mentions.mjs\" hook gemini session-end 2>/dev/null; exit 0",
+            "timeout": 15000
+          }
+        ]
+      }
+    ]
+  }
+}
