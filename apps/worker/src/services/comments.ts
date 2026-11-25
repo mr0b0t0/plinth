@@ -39,6 +39,7 @@ import { nowIso } from "../lib/time.ts";
 import { type Decision, takesRequests } from "../policy.ts";
 import { decideFor, requireArtifact, requireVersion } from "./artifacts.ts";
 import type { Ctx } from "./context.ts";
+import { queueMentionEvents } from "./mentionEvents.ts";
 import { deliveryOf } from "./mentionWatches.ts";
 
 // ---------- authors ----------
@@ -325,6 +326,13 @@ export async function insertComment(
   if (tasks.length > 0) {
     // One batch: the comment and its tasks are written together or not at all.
     await ctx.db.batch([insert, ctx.db.insert(mentionTasks).values(tasks)]);
+    // Clients subscribed to mention.created hear about it (docs/spec.md "Mention wake-ups"), after
+    // the response and never in its way.
+    ctx.waitUntil(
+      queueMentionEvents(ctx, artifact.ownerId, artifact.slug, tasks).catch((e) =>
+        console.error("mention events", e),
+      ),
+    );
   } else {
     await insert.run();
   }

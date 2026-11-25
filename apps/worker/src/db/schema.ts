@@ -154,6 +154,51 @@ export const mentionTasks = sqliteTable("mention_tasks", {
   offeredWatches: text("offered_watches").notNull().default("[]"),
 });
 
+/** An MCP Events subscription (0024_mention_watches; docs/spec.md "Mention wake-ups"). */
+export const eventSubscriptions = sqliteTable("event_subscriptions", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  connectionId: text("connection_id").notNull(),
+  name: text("name").notNull(),
+  artifactId: text("artifact_id"),
+  arguments: text("arguments").notNull(),
+  url: text("url").notNull(),
+  secret: text("secret").notNull(),
+  previousSecret: text("previous_secret"),
+  previousUntil: text("previous_until"),
+  profile: text("profile", { enum: ["draft", "final"] }).notNull(),
+  refreshBefore: text("refresh_before").notNull(),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+  lastDeliveryAt: text("last_delivery_at"),
+  lastError: text("last_error"),
+  failedSince: text("failed_since"),
+});
+
+/** One webhook POST, retried until delivered or abandoned. */
+export const eventDeliveries = sqliteTable("event_deliveries", {
+  id: text("id").primaryKey(),
+  subscriptionId: text("subscription_id").notNull(),
+  taskId: text("task_id").notNull(),
+  body: text("body").notNull(),
+  attempts: integer("attempts").notNull().default(0),
+  nextAttemptAt: text("next_attempt_at"),
+  createdAt: text("created_at").notNull(),
+  deliveredAt: text("delivered_at"),
+  lastError: text("last_error"),
+});
+
+/** A callback URL a connection proved it controls. */
+export const eventCallbacks = sqliteTable(
+  "event_callbacks",
+  {
+    connectionId: text("connection_id").notNull(),
+    url: text("url").notNull(),
+    verifiedAt: text("verified_at").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.connectionId, t.url] })],
+);
+
 /** An agent session waiting for mentions (0024_mention_watches; docs/spec.md "Mention wake-ups"). */
 export const mentionWatches = sqliteTable("mention_watches", {
   id: text("id").primaryKey(),
@@ -405,6 +450,8 @@ export type ConnectionRow = typeof agentConnections.$inferSelect;
 export type CommentRow = typeof comments.$inferSelect;
 export type MentionTaskRow = typeof mentionTasks.$inferSelect;
 export type MentionWatchRow = typeof mentionWatches.$inferSelect;
+export type EventSubscriptionRow = typeof eventSubscriptions.$inferSelect;
+export type EventDeliveryRow = typeof eventDeliveries.$inferSelect;
 export type GrantRow = typeof accessGrants.$inferSelect;
 
 // Invitation emails (migrations/0021_invitation_opt_outs.sql): mailboxes, by their invitation

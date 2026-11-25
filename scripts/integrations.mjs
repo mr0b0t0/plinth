@@ -135,6 +135,8 @@ const WATCHER = "scripts/plinth-mentions.mjs";
 const watcherCmd = (sub) => `node "\${CLAUDE_PLUGIN_ROOT}/${WATCHER}" ${sub}`;
 const watcherSource = (f) => readFileSync(path.join(root, "integrations/watcher", f), "utf8");
 outputs.set(`integrations/plugin/${WATCHER}`, watcherSource("plinth-mentions.mjs"));
+// The relay (sessions, watches, waking clients from outside) that plinth-mentions.mjs imports.
+outputs.set("integrations/plugin/scripts/plinth-relay.mjs", watcherSource("plinth-relay.mjs"));
 // The watcher imports the shared OAuth client from next to itself.
 outputs.set("integrations/plugin/scripts/plinth-oauth.mjs", watcherSource("plinth-oauth.mjs"));
 outputs.set(
@@ -164,7 +166,7 @@ outputs.set(
   "integrations/plugin/hooks/hooks.json",
   json({
     description:
-      "Say where pages go (Plinth) and list Plinth @mention requests waiting when a session starts",
+      "Say where pages go (Plinth), list Plinth @mention requests waiting when a session starts, and in T3 Code bring later ones to the session through the mention relay",
     hooks: {
       SessionStart: [
         {
@@ -177,9 +179,34 @@ outputs.set(
               timeout: 5,
             },
             {
+              // Requests waiting; in T3 Code, also registers the session with the mention relay.
               type: "command",
-              command: `command -v node >/dev/null 2>&1 && ${watcherCmd("pending")} 2>/dev/null; exit 0`,
+              command: `command -v node >/dev/null 2>&1 && ${watcherCmd("hook claude session-start")} 2>/dev/null; exit 0`,
               timeout: 15,
+            },
+          ],
+        },
+      ],
+      // In T3 Code (no MCP tasks there): watch what this session publishes, through the relay.
+      PostToolUse: [
+        {
+          matcher: "mcp__.*__(publish_artifact|update_artifact)",
+          hooks: [
+            {
+              type: "command",
+              command: `command -v node >/dev/null 2>&1 && ${watcherCmd("hook claude post-tool")} 2>/dev/null; exit 0`,
+              timeout: 15,
+            },
+          ],
+        },
+      ],
+      SessionEnd: [
+        {
+          hooks: [
+            {
+              type: "command",
+              command: `command -v node >/dev/null 2>&1 && ${watcherCmd("hook claude session-end")} 2>/dev/null; exit 0`,
+              timeout: 10,
             },
           ],
         },
@@ -251,8 +278,8 @@ outputs.set(
 const DIRECTORY = "integrations/plugin-directory";
 const directorySkillEdits = [
   [
-    "- In Claude Code with the Plinth plugin, `/plinth:watch-mentions` connects a watcher that tells the\n  session when new requests arrive, so the user does not have to ask you to check.",
-    "- In Claude Code, the full Plinth plugin (`claude plugin marketplace add mr0b0t0/plinth`) adds\n  `/plinth:watch-mentions`, a watcher that tells the session when new requests arrive. Without it,\n  check `list_mentions` when the user asks.",
+    "- In Claude Code with the Plinth plugin, `/plinth:watch-mentions` checks or disconnects the relay.",
+    "- This build of the plugin has no hooks, so the relay is not part of it: in Claude Code,\n  `watch_mentions` does the watching. The full Plinth plugin\n  (`claude plugin marketplace add mr0b0t0/plinth`) adds the relay and `/plinth:watch-mentions`.",
   ],
   [
     "- Claude Code: the plugin asks for its Plinth instance when it is enabled (the default is the\n  hosted one). Install it with `claude plugin install plinth@plinth --config instance_url=<origin>`,\n  or change it later with `/plugin configure plinth@plinth`, then restart Claude Code. `PLINTH_URL`,\n  when set, overrides it.",
@@ -294,7 +321,7 @@ const listingSkill = (build, instanceBullet) => {
       "The person installed Plinth to keep and share what their agents make. Publish a page or document\nmeant to be kept, sent or shown to someone else to Plinth, unless the person names another place\nfor it.\n",
     ],
     [
-      "- In Claude Code with the Plinth plugin, `/plinth:watch-mentions` connects a watcher that tells the\n  session when new requests arrive, so the user does not have to ask you to check.\n",
+      "- In Claude Code with the Plinth plugin, `/plinth:watch-mentions` checks or disconnects the relay.\n",
       "",
     ],
     [

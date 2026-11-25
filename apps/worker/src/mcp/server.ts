@@ -7,6 +7,7 @@ import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
 import { LIMITS, PRODUCT_NAME } from "@plinth/shared";
 import { PLINTH_VERSION } from "../app/version.ts";
 import type { Ctx } from "../services/context.ts";
+import { registerEventMethods } from "./events.ts";
 import {
   BOUND_TOKEN_NOTE,
   CATEGORY_INSTRUCTION,
@@ -87,6 +88,8 @@ export function buildMcpServer(ctx: Ctx): McpServer {
   for (const register of MCP_TOOL_FILES) register({ server, ctx, opaque, preview });
   // watch_mentions answers with an MCP task where the client supports them (mcp/tasks.ts).
   registerTaskMethods(server, ctx);
+  // mention.created as an MCP event (mcp/events.ts), for clients such as ChatGPT.
+  registerEventMethods(server, ctx);
 
   return server;
 }

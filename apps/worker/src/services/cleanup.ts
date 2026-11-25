@@ -54,6 +54,13 @@ export const ARTIFACT_WIPE: readonly ArtifactWipeStep[] = [
         .bind(new Date(now).toISOString(), id),
     ],
   },
+  // Event subscriptions filtered to it end: nothing on it will be mentioned again.
+  {
+    tables: ["event_subscriptions"],
+    statements: (d1, id) => [
+      d1.prepare("DELETE FROM event_subscriptions WHERE artifact_id = ?1").bind(id),
+    ],
+  },
   // Tokens limited to the artifact (0012_bound_tokens) are revoked: they can never act again, and
   // the row stays on its person's Connections page until the artifact's erase removes it.
   {

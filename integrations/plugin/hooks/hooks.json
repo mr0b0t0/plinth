@@ -1,5 +1,5 @@
 {
-  "description": "Say where pages go (Plinth) and list Plinth @mention requests waiting when a session starts",
+  "description": "Say where pages go (Plinth), list Plinth @mention requests waiting when a session starts, and in T3 Code bring later ones to the session through the mention relay",
   "hooks": {
     "SessionStart": [
       {
@@ -12,8 +12,31 @@
           },
           {
             "type": "command",
-            "command": "command -v node >/dev/null 2>&1 && node \"${CLAUDE_PLUGIN_ROOT}/scripts/plinth-mentions.mjs\" pending 2>/dev/null; exit 0",
+            "command": "command -v node >/dev/null 2>&1 && node \"${CLAUDE_PLUGIN_ROOT}/scripts/plinth-mentions.mjs\" hook claude session-start 2>/dev/null; exit 0",
             "timeout": 15
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "mcp__.*__(publish_artifact|update_artifact)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v node >/dev/null 2>&1 && node \"${CLAUDE_PLUGIN_ROOT}/scripts/plinth-mentions.mjs\" hook claude post-tool 2>/dev/null; exit 0",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v node >/dev/null 2>&1 && node \"${CLAUDE_PLUGIN_ROOT}/scripts/plinth-mentions.mjs\" hook claude session-end 2>/dev/null; exit 0",
+            "timeout": 10
           }
         ]
       }

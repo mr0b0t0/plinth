@@ -475,6 +475,27 @@ export const MENTION_WATCH = {
 /** The MCP tasks extension (protocol revision 2026-07-28), as clients and servers name it. */
 export const MCP_TASKS_EXTENSION = "io.modelcontextprotocol/tasks";
 
+/** The MCP events extension (SEP-3415), as clients and servers name it. */
+export const MCP_EVENTS_EXTENSION = "io.modelcontextprotocol/events";
+
+/** MCP Events for mention wake-ups (docs/spec.md "Mention wake-ups"). */
+export const MENTION_EVENTS = {
+  /** A subscription's lifetime when the client suggests none (or no expiry), and its bounds. */
+  defaultTtlMs: 24 * 60 * 60 * 1000,
+  minTtlMs: 60 * 60 * 1000,
+  maxTtlMs: 7 * 24 * 60 * 60 * 1000,
+  /** Live subscriptions per connection. */
+  maxSubscriptionsPerConnection: 20,
+  /** How long a callback stays verified for its connection. */
+  callbackVerifiedMs: 24 * 60 * 60 * 1000,
+  /** One webhook POST's time limit. */
+  timeoutMs: 10_000,
+  /** Deliveries one cron run or one comment sends. */
+  deliveriesPerRun: 50,
+  /** What events/poll suggests between polls. */
+  pollMs: 30_000,
+} as const;
+
 export const RATE_LIMITS = {
   loginPerEmailPerHour: 5,
   loginPerIpPerHour: 20,
