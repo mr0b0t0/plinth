@@ -22,6 +22,7 @@ describe("room constants", () => {
       gone: 4404,
       full: 4409,
       redeclared: 4410,
+      resync: 4412,
       rate: 4429,
     });
     expect(ROOM_LIMITS.presenceBytes).toBe(400);
