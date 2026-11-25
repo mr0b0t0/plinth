@@ -34,7 +34,15 @@
 // people write): the agent reads the request itself with claim_mention, whose result marks it as
 // untrusted. Plain Node (18+), no dependencies. Source: integrations/watcher/; the plugins get
 // copies from scripts/integrations.mjs.
-import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { configDir, createOAuth, hostKey, normalizeOrigin } from "./plinth-oauth.mjs";
 import {
@@ -425,6 +433,16 @@ export function connectNote(why = "not_connected") {
 async function hook(oauth, client, event) {
   const spec = CLIENTS[client];
   const input = await readHookInput();
+  // PLINTH_RELAY_DEBUG_LOG: append which hook ran and its input's field names (never values but
+  // the session id), for checking a client's hooks fire.
+  if (process.env.PLINTH_RELAY_DEBUG_LOG) {
+    try {
+      appendFileSync(
+        process.env.PLINTH_RELAY_DEBUG_LOG,
+        `${JSON.stringify({ at: new Date().toISOString(), client, event, keys: Object.keys(input), session: sessionIdOf(client, input) })}\n`,
+      );
+    } catch {}
+  }
   if (!spec) return;
   const base = origin();
   const dir = sessionsDir(configDir(), base);

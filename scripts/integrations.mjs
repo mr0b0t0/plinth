@@ -279,9 +279,9 @@ outputs.set(
   }),
 );
 outputs.set(`${CODEX}/.mcp.json`, json({ mcpServers: { [SERVER_NAME]: { url: hostedMcp } } }));
-const codexHook = (event, matcher) => ({
+const codexHook = (event, matcher, timeout = 15) => ({
   ...(matcher ? { matcher } : {}),
-  hooks: [{ type: "command", command: relayHook("$PLUGIN_ROOT", "codex", event), timeout: 15 }],
+  hooks: [{ type: "command", command: relayHook("$PLUGIN_ROOT", "codex", event), timeout }],
 });
 outputs.set(
   `${CODEX}/hooks/hooks.json`,
@@ -291,7 +291,8 @@ outputs.set(
     hooks: {
       SessionStart: [codexHook("session-start", "startup|resume|clear")],
       PostToolUse: [codexHook("post-tool", "mcp__.*__(publish_artifact|update_artifact)")],
-      SessionEnd: [codexHook("session-end")],
+      // Codex gives SessionEnd hooks three seconds at most.
+      SessionEnd: [codexHook("session-end", undefined, 3)],
     },
   }),
 );
