@@ -256,8 +256,25 @@ function drawInline(doc: Document, host: RichHost, parent: HTMLElement, c: RichI
       const code = el(doc, "code");
       code.textContent = s.text;
       target().append(code);
-    } else target().append(doc.createTextNode(s.text));
+    } else drawText(doc, target(), s.text);
   }
+}
+
+/**
+ * Text as the page shows it. A soft line break ("\n" in text) is a space on the page, so it goes
+ * in a span of its own that collapses it to one (plinth-rich__soft); the walk reads the span as its
+ * text, so the model keeps the line break and an untouched block keeps its bytes.
+ */
+function drawText(doc: Document, parent: HTMLElement, text: string): void {
+  const parts = text.split("\n");
+  parts.forEach((part, i) => {
+    if (i > 0) {
+      const soft = el(doc, "span", "plinth-rich__soft");
+      soft.textContent = "\n";
+      parent.append(soft);
+    }
+    if (part !== "") parent.append(doc.createTextNode(part));
+  });
 }
 
 function drawBlock(
@@ -1056,7 +1073,9 @@ export class RichBlockEditor {
         for (const child of Array.from(n.childNodes)) {
           if (child.nodeType === 3) {
             const len = (child.nodeValue ?? "").length;
-            if (left <= len) {
+            // After a soft line break the caret goes in the text that follows it, not its span.
+            const soft = child.parentElement?.classList.contains("plinth-rich__soft") ?? false;
+            if (left < len || (left === len && !soft)) {
               found = [child, left];
               return true;
             }
