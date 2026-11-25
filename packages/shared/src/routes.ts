@@ -89,6 +89,10 @@ export const API = {
   comment: "/comments/:id",
   mentions: "/mentions", // GET list_mentions
   claimMention: "/mentions/:id/claim", // POST claim_mention
+  // mention wake-ups: the relay on the user's computer (scope mentions:watch, or mentions)
+  mentionWatches: "/mention-watches", // POST start a watch
+  mentionWatchesPoll: "/mention-watches/poll", // POST what each watch was handed
+  mentionWatch: "/mention-watches/:id", // DELETE end a watch
   replyComment: "/comments/:id/reply", // POST reply_comment
   // reports and admin
   report: "/artifacts/:ref/report",

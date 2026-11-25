@@ -56,6 +56,7 @@ describe("MCP endpoint", () => {
         "publish_artifact",
         "reply_comment",
         "resolve_comment",
+        "watch_mentions",
         "restore_version",
         "set_visibility",
         "show_artifact",

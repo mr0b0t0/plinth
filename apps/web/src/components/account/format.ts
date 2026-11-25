@@ -101,6 +101,11 @@ export const SCOPE_META: Record<Scope, { label: string; description: string }> =
     label: "Answer mentions",
     description: "Read comments that mention it, and reply to them.",
   },
+  "mentions:watch": {
+    label: "Notice mentions",
+    description:
+      "See that a comment mentions one of your agents, so this computer can bring it to your open sessions. It can't read comments or artifacts.",
+  },
 };
 
 /** Label for a scope string, including ones this build does not know. */

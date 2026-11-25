@@ -25,6 +25,14 @@ import { anchorLabel, fullTime, relativeTime, type Thread as ThreadData } from "
 type Mention = CommentInfo["mentions"][number];
 
 /** Mention task state, in words. "done" links the version the agent published. */
+/**
+ * A request's state in words: a pending one says whether an agent session was woken for it
+ * ("sent") or none has it yet ("waiting"), docs/spec.md "Mention wake-ups".
+ */
+export function mentionStateLabel(m: Pick<Mention, "state" | "delivery">): string {
+  return m.state === "pending" && m.delivery ? m.delivery : m.state;
+}
+
 export function MentionChip({ mention, slug }: { mention: Mention; slug: string }) {
   const { state, target, result_version: v } = mention;
   const published = state === "done" && v;
@@ -48,7 +56,7 @@ export function MentionChip({ mention, slug }: { mention: Mention; slug: string 
             </Link>
           </>
         ) : (
-          state
+          mentionStateLabel(mention)
         )}
       </span>
     </li>

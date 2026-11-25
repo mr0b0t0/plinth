@@ -9,6 +9,7 @@ import type {
   ContentIsolation,
   DataCapability,
   EffectiveRole,
+  MentionDelivery,
   MentionState,
   PublishWarningCode,
   ReportState,
@@ -397,6 +398,8 @@ export interface CommentInfo {
     task_id: string;
     target: string;
     state: MentionState;
+    /** For a pending task: "sent" to an agent session, or "waiting" for one. Null otherwise. */
+    delivery: MentionDelivery | null;
     result_version: number | null;
   }[];
 }
@@ -430,10 +433,33 @@ export interface MentionTaskInfo {
    */
   anchor: Anchor | null;
   version_number: number;
+  /** For a pending task: "sent" to an agent session, or "waiting" for one. Null otherwise. */
+  delivery: MentionDelivery | null;
   claimed_by: string | null;
   claimed_at: string | null;
   result_version: number | null;
   created_at: string;
+}
+
+/**
+ * A mention watch (docs/spec.md "Mention wake-ups"): an agent session (an MCP task) or a session
+ * on the user's computer (through the mention relay) waiting for requests on an artifact.
+ */
+export interface MentionWatchInfo {
+  id: string;
+  kind: "task" | "relay";
+  artifact_id: string | null;
+  client_type: ClientType;
+  status: "working" | "completed" | "cancelled" | "expired";
+  created_at: string;
+  expires_at: string;
+}
+
+/** What one relay poll answers for one watch: the mentions it was just handed, ids only. */
+export interface MentionWatchPoll {
+  id: string;
+  status: MentionWatchInfo["status"];
+  offers: { task_id: string; artifact_id: string }[];
 }
 
 export interface ConnectionInfo {

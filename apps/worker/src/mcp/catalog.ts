@@ -22,6 +22,8 @@ export const MCP_TOOL_SUMMARIES = {
   list_mentions: "Requests addressed to this agent from comments (@mentions).",
   claim_mention: "Lock a pending mention task so only one agent acts on it.",
   reply_comment: "Reply in a comment thread; completes a mention task this agent claimed.",
+  watch_mentions:
+    "Watch an artifact so comments that mention this agent reach its session (an MCP task where supported).",
   list_artifact_data: "Read a page's shared data (polls, sign-ups, trackers): summary, documents.",
   write_artifact_data: "Create, replace or delete a page's shared data documents, with if_rev.",
   start_upload:
@@ -84,6 +86,7 @@ export const MCP_TOOL_ANNOTATIONS: Record<McpToolName, ToolAnnotations> = {
   list_mentions: reads("List mentions"),
   claim_mention: writes("Claim mention"),
   reply_comment: writes("Reply to comment"),
+  watch_mentions: writes("Watch mentions"),
   list_artifact_data: reads("List artifact data"),
   write_artifact_data: writes("Write artifact data", { destructive: true }),
   start_upload: writes("Start upload"),

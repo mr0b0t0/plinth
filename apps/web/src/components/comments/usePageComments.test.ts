@@ -24,7 +24,15 @@ function comment(over: Partial<CommentInfo> = {}): CommentInfo {
     anchor: null,
     status: "open",
     created_at: new Date(1_700_000_000_000 + n * 1000).toISOString(),
-    mentions: [{ task_id: "t", target: "@claude", state: "pending", result_version: null }],
+    mentions: [
+      {
+        task_id: "t",
+        target: "@claude",
+        state: "pending",
+        delivery: "waiting" as const,
+        result_version: null,
+      },
+    ],
     ...over,
   };
 }
@@ -278,6 +286,7 @@ describe("usePageComments", () => {
       "Label the page chose",
       "@claude",
       "pending",
+      "waiting",
     ]) {
       expect(all).not.toContain(secret);
     }

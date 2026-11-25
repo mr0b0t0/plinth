@@ -39,6 +39,7 @@ import { nowIso } from "../lib/time.ts";
 import { type Decision, takesRequests } from "../policy.ts";
 import { decideFor, requireArtifact, requireVersion } from "./artifacts.ts";
 import type { Ctx } from "./context.ts";
+import { deliveryOf } from "./mentionWatches.ts";
 
 // ---------- authors ----------
 
@@ -185,6 +186,7 @@ function toInfo(l: LoadedComment, tasks: MentionTaskRow[], revealEmail: boolean)
       task_id: t.id,
       target: t.targetLabel,
       state: t.state,
+      delivery: deliveryOf(t),
       result_version: t.resultVersion,
     })),
   };
@@ -372,6 +374,10 @@ async function mentionTasksFor(
     completedAt: null,
     resultVersion: null,
     createdAt: comment.createdAt,
+    offeredTo: null,
+    offeredUntil: null,
+    offerCount: 0,
+    offeredWatches: "[]",
   };
   const tasks: MentionTaskRow[] = [];
   const labelNames = names.filter((n) => !mentionAgentType(n));

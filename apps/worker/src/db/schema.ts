@@ -146,6 +146,30 @@ export const mentionTasks = sqliteTable("mention_tasks", {
   completedAt: text("completed_at"),
   resultVersion: integer("result_version"),
   createdAt: text("created_at").notNull(),
+  /** The watch whose session was woken for it (0024_mention_watches), until offeredUntil. */
+  offeredTo: text("offered_to"),
+  offeredUntil: text("offered_until"),
+  offerCount: integer("offer_count").notNull().default(0),
+  /** JSON array of the watch ids it was offered to. */
+  offeredWatches: text("offered_watches").notNull().default("[]"),
+});
+
+/** An agent session waiting for mentions (0024_mention_watches; docs/spec.md "Mention wake-ups"). */
+export const mentionWatches = sqliteTable("mention_watches", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  connectionId: text("connection_id").notNull(),
+  kind: text("kind", { enum: ["task", "relay"] }).notNull(),
+  artifactId: text("artifact_id"),
+  clientType: text("client_type", { enum: ["claude", "codex", "other"] }).notNull(),
+  status: text("status", { enum: ["working", "completed", "cancelled", "expired"] })
+    .notNull()
+    .default("working"),
+  createdAt: text("created_at").notNull(),
+  lastSeenAt: text("last_seen_at").notNull(),
+  expiresAt: text("expires_at").notNull(),
+  completedAt: text("completed_at"),
+  result: text("result"),
 });
 
 export const sessions = sqliteTable("sessions", {
@@ -380,6 +404,7 @@ export type VersionRow = typeof versions.$inferSelect;
 export type ConnectionRow = typeof agentConnections.$inferSelect;
 export type CommentRow = typeof comments.$inferSelect;
 export type MentionTaskRow = typeof mentionTasks.$inferSelect;
+export type MentionWatchRow = typeof mentionWatches.$inferSelect;
 export type GrantRow = typeof accessGrants.$inferSelect;
 
 // Invitation emails (migrations/0021_invitation_opt_outs.sql): mailboxes, by their invitation

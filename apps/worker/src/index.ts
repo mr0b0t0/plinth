@@ -20,12 +20,14 @@ import { applyAppHeaders } from "./app/headers.ts";
 import { notFoundText, serveSpa } from "./app/spa.ts";
 import { type Bindings, ConfigError, getConfig } from "./config.ts";
 import { contentRoot, resolveHost, serveContent } from "./content/serve.ts";
+import { getDb } from "./db/client.ts";
 import { ApiError } from "./lib/errors.ts";
 import { handleMcp } from "./mcp/server.ts";
 import { mcpResourceMetadataUrl, oauthRoutes } from "./oauth/routes.ts";
 import { pruneUploadTickets, sweepStagingAttempts } from "./services/attempts.ts";
 import { pruneInvitationMarks } from "./services/invitations.ts";
 import { liveRetentionDays, pruneLiveDrafts } from "./services/live.ts";
+import { sweepMentionWatches } from "./services/mentionWatches.ts";
 import { foldOpens, viewRetentionDays } from "./services/views.ts";
 
 // The live-room Durable Object class (binding ROOMS, wrangler.jsonc); see src/rooms/.
@@ -167,6 +169,8 @@ const SCHEDULED_TASKS: readonly ((env: Bindings, at: number) => Promise<unknown>
   (env, at) => pruneLiveDrafts(env.DB, liveRetentionDays(env), at),
   // Invitation email counters (hashed addresses) older than two days.
   (env, at) => pruneInvitationMarks(env.DB, at),
+  // Mention watches past their expiry, and ended ones after a week.
+  (env, at) => sweepMentionWatches({ db: getDb(env.DB) }, at),
 ];
 
 export default {

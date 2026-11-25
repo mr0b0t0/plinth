@@ -459,6 +459,58 @@ export function canActOnMention(
 }
 
 /**
+ * May this agent start a mention watch (docs/spec.md "Mention wake-ups")? A task watch (an MCP
+ * task from watch_mentions) needs a connection that can act on mentions itself: the `mentions`
+ * scope, account-wide. A relay watch (the mention relay on the user's computer) needs
+ * `mentions:watch`, which hears any client type, or `mentions`, which hears only the connection's
+ * own client type (the Claude Code mention watcher connected before `mentions:watch` existed).
+ */
+export function mayWatchMentions(
+  p: Principal,
+  kind: "task" | "relay",
+  clientType: ClientType,
+): boolean {
+  if (p.kind !== "agent" || !p.connectionId || boundArtifactOf(p) !== null) return false;
+  if (kind === "task") return p.scopes.has("mentions") && clientType === p.clientType;
+  if (p.scopes.has("mentions:watch")) return true;
+  return p.scopes.has("mentions") && clientType === p.clientType;
+}
+
+/** Only the connection that started a watch polls or ends it. */
+export function ownsWatch(p: Principal, watch: { connectionId: string }): boolean {
+  return p.kind === "agent" && p.connectionId !== null && p.connectionId === watch.connectionId;
+}
+
+/**
+ * Does a watch hear this mention task? Only on its user's own artifacts (mentions go to the owner's
+ * agents), on its artifact (or any, for a relay watching them all), addressed to its client type,
+ * or, for a task watch, to its own connection by label. The watch's connection must still be live:
+ * callers read watches through a connection the request authenticated.
+ */
+export function watchHears(
+  watch: {
+    userId: string;
+    connectionId: string;
+    kind: "task" | "relay";
+    artifactId: string | null;
+    clientType: ClientType;
+  },
+  task: {
+    artifactId: string;
+    targetConnection: string | null;
+    targetClientType: ClientType | null;
+  },
+  artifactOwnerId: string,
+): boolean {
+  if (watch.userId !== artifactOwnerId) return false;
+  if (watch.artifactId !== null && watch.artifactId !== task.artifactId) return false;
+  if (task.targetConnection) {
+    return watch.kind === "task" && watch.connectionId === task.targetConnection;
+  }
+  return task.targetClientType === watch.clientType;
+}
+
+/**
  * Owner-only metadata (the category) is the owner's own organisation: hidden from every other role,
  * including editors and an admin reviewing a report, and from a token limited to one artifact,
  * even the owner's.
