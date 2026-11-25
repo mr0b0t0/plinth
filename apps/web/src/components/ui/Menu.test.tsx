@@ -94,6 +94,16 @@ describe("Menu", () => {
     expect(document.activeElement).toBe(trigger);
   });
 
+  it("opens as a manual popover, out of the page's flow, so opening never resizes the page", async () => {
+    const { user, trigger } = setup();
+    await user.click(trigger);
+    const menu = screen.getByRole("menu", { name: "Actions" });
+    // Shown in the top layer (where supported) and fixed to the viewport by menu.css, placed by
+    // menuPlacement.ts; the browser's own light dismiss stays off, the menu handles it.
+    expect(menu.getAttribute("popover")).toBe("manual");
+    expect(menu.closest(".pl-menu")?.contains(trigger)).toBe(true);
+  });
+
   it("closes on a click outside", async () => {
     const { user, trigger } = setup();
     await user.click(trigger);
