@@ -28,17 +28,26 @@ and the GET stream, and no client starts a turn on a notification. Three mechani
 
 | Client | How a request reaches the session | Wakes an idle session? | Checked how |
 | --- | --- | --- | --- |
-| Claude Code CLI (interactive, v2.1.304+) | MCP task from `watch_mentions` | Yes | Real TUI against a local instance: publish, watch, comment, woke in ~25 s, claimed, v2, replied, re-armed |
+| Claude Code CLI (interactive, v2.1.304+) | MCP task from `watch_mentions` | Yes | Real TUI against a local instance (woke in ~25 s) and against production (woke in ~36 s): claimed, v2, replied, re-armed |
 | Claude Agent SDK / `claude -p --input-format stream-json` with `CLAUDE_AUTO_BACKGROUND_TASKS=1` | MCP task | Yes | Real stream-json session: woke ~15 s after the comment, handled it |
-| Same without that variable (T3 Code's Claude threads) | Relay: plugin hooks, `t3 thread send` | Yes | Claude Code does not declare tasks there (no hint, no block); relay round and `t3 thread send` covered by tests; T3 wake checked on production |
+| Same without that variable (T3 Code's Claude threads) | Relay: plugin hooks, `t3 thread send` | Yes | Claude Code does not declare tasks there (no hint, no block). On production a T3 Codex thread was woken by `t3 thread send` 15 s after the comment and handled it through the user's own Codex connection |
 | VS Code, Claude Desktop local sessions (v2.1.331+, HTTP server) | MCP task | Yes, per Anthropic's docs | Same server path as the CLI |
 | claude.ai chats, Claude Code cloud sessions | MCP task (claude.ai connector) | Yes on paid plans, per Anthropic's docs | Same server path; not driven from here |
-| Codex CLI / app / IDE | Relay: `codex queue --thread <id>` | Yes for a loaded thread; an unloaded one runs it when opened | Real Codex TUI against a local instance: woke ~30 s after the comment, published v2, replied. Plugin hooks load from `.codex-plugin` (checked with `hooks/list`) |
+| Codex CLI / app / IDE | Relay: `codex queue --thread <id>` | Yes for a loaded thread; an unloaded one runs it when opened | Real Codex TUI against a local instance (~30 s) and production (~15 s): published v2, replied. Plugin hooks load from `.codex-plugin` (checked with `hooks/list`) |
 | Copilot CLI | Relay: handed over at session start or `agentStop` | No (at turn boundaries) | Real Copilot CLI with the plugin: hooks fire with session ids; a resumed session handled a waiting request (v2, reply) |
 | Cursor | Relay: `sessionStart` context, `stop` → `followup_message` | No (at turn boundaries) | Hook formats from Cursor's docs and app bundle; parsing and output under test. The installed `cursor-agent` predates hooks |
 | Gemini CLI | Relay: `SessionStart`, `AfterAgent` block | No (at turn boundaries) | From Gemini CLI's source and docs; not installed here |
 | Antigravity CLI | None yet | No | Its plugin format can't add context after a tool; requests wait in `list_mentions` |
-| ChatGPT (Work chats, dots) | MCP Events webhook (`mention.created`) | Yes, in the subscribed chat | Signed delivery, both dialects, verification, retries under test; production delivery checked with a public callback |
+| ChatGPT (Work chats, dots) | MCP Events webhook (`mention.created`) | Yes, in the subscribed chat | Signed delivery, both dialects, verification, retries under test. On production, a subscription in ChatGPT's dialect to a public callback was verified by signed challenge and got the event ~2 s after the comment, correctly signed, ids only. ChatGPT itself not driven from here |
+
+## A caveat in Claude Code
+
+Claude Code decides per session whether to declare the tasks extension, from feature flags it
+fetches and caches. On 2026-11-25 a freshly started session and, later in the day, stream-json
+sessions with `CLAUDE_AUTO_BACKGROUND_TASKS=1` did not declare it, while interactive sessions did.
+Without the declaration Plinth adds no hint and `watch_mentions` answers that it can't wake the
+conversation, so nothing blocks; in Claude Code the plugin's monitor (relay connected) still
+catches the request.
 
 ## Choices worth remembering
 
