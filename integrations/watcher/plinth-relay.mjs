@@ -279,13 +279,13 @@ export async function pollSessions(call, sessions) {
   const fresh = new Map();
   for (let i = 0; i < ids.length; i += 200) {
     const r = await call("POST", "/mention-watches/poll", { ids: ids.slice(i, i + 200) });
-    if (!r || r.status !== 200) throw new Error(`Plinth answered ${r?.status ?? "nothing"}`);
+    if (r?.status !== 200) throw new Error(`Plinth answered ${r?.status ?? "nothing"}`);
     const byId = new Map((r.body?.watches ?? []).map((w) => [w.id, w]));
     for (const s of sessions) {
       for (const [artifact, wid] of Object.entries(s.watches)) {
         const w = byId.get(wid);
         if (!w && !ids.slice(i, i + 200).includes(wid)) continue;
-        if (!w || w.status !== "working") {
+        if (w?.status !== "working") {
           // Ended (expired, the artifact deleted, the relay off for a while): start it again.
           const again = await startWatch(call, s, artifact === "*" ? null : artifact);
           if (again.id) s.watches[artifact] = again.id;

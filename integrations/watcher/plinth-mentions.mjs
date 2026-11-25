@@ -349,9 +349,9 @@ async function watch(oauth) {
       } else if (watchId) {
         warnedSignedOut = false;
         const r = await call("POST", "/mention-watches/poll", { ids: [watchId] });
-        if (!r || r.status !== 200) throw new Error(`Plinth answered ${r?.status ?? "nothing"}`);
+        if (r?.status !== 200) throw new Error(`Plinth answered ${r?.status ?? "nothing"}`);
         const w = (r.body?.watches ?? [])[0];
-        if (!w || w.status !== "working") watchId = null;
+        if (w?.status !== "working") watchId = null;
         const offers = w?.offers ?? [];
         // One line per request per computer: an open offer is handed again on every poll.
         const fresh = new Set(
