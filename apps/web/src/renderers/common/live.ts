@@ -296,6 +296,11 @@ export class LiveDocClient implements LiveBackend {
     );
   }
 
+  /** An edit or a struct op this socket sent that the room has not answered yet. */
+  get sending(): boolean {
+    return this.unacked !== null || this.structPending;
+  }
+
   get structWaiting(): boolean {
     return this.structPending;
   }

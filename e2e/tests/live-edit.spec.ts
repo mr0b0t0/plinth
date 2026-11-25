@@ -33,8 +33,22 @@ interface Setup {
   commenter: string;
 }
 
+const TABLE_DOC = [
+  "# Plan",
+  "",
+  "Intro.",
+  "",
+  "| Name | Qty |",
+  "| --- | --- |",
+  "| Apples | 3 |",
+  "| Pears | 4 |",
+  "",
+  "After.",
+  "",
+].join("\n");
+
 /** An owner's doc shared with an editor and a commenter. */
-async function setup(page: Page): Promise<Setup> {
+async function setup(page: Page, content = DOC): Promise<Setup> {
   const owner = uniqueEmail("live-owner");
   const editor = uniqueEmail("live-editor");
   const commenter = uniqueEmail("live-commenter");
@@ -42,7 +56,7 @@ async function setup(page: Page): Promise<Setup> {
   const art = await publishArtifact(page.request, token, {
     title: "Plan",
     type: "doc",
-    content: DOC,
+    content,
     html: undefined,
     visibility: "allowlist",
   });
@@ -153,6 +167,149 @@ test("two editors on one doc: a held block, typing that arrives live, Publish ma
   await expect(frameOf(page).locator("main.plinth-doc--editing")).toBeVisible();
   await expect(page.getByRole("button", { name: "Done" })).toHaveCount(0);
   await other.context().close();
+});
+
+test("publishing with a block open makes a version with what was typed; the status never sticks on Saving…", async ({
+  page,
+  browser,
+}) => {
+  test.setTimeout(60_000);
+  const s = await setup(page);
+  await openAs(browser, s.owner, s.slug, page);
+  await startEditing(page);
+  await connected(page);
+  await frameOf(page).locator("p", { hasText: "First paragraph." }).click();
+  const field = frameOf(page).locator('.plinth-doc__open [contenteditable="true"]');
+  await expect(field).toBeFocused();
+  await field.press("End");
+  await field.pressSequentially(" Typed");
+  await expect(saveStatus(page)).toContainText("Draft saved", { timeout: 15_000 });
+  // A trailing space leaves the block's Markdown as it is: nothing is sent, and the status
+  // settles all the same, with the block still open.
+  await field.press("Space");
+  await expect(saveStatus(page)).toContainText("Draft saved");
+  await expect(saveStatus(page)).not.toContainText("Saving");
+  // Cmd/Ctrl+S in the open block publishes at once: a new version, not only the draft.
+  await field.press("ControlOrMeta+s");
+  await expect(saveStatus(page)).toContainText("Published as v2");
+  let detail = await apiGet(page.request, `/artifacts/${s.id}`);
+  expect(detail.body.current_version).toBe(2);
+  expect(detail.body.content).toContain("First paragraph. Typed");
+  // Publish changes from the ⋯ menu right after typing waits for the keystrokes on their way.
+  // (After the trailing space typed above.)
+  await field.pressSequentially("again");
+  await publishChanges(page);
+  await expect(saveStatus(page)).toContainText("Published as v3");
+  detail = await apiGet(page.request, `/artifacts/${s.id}`);
+  expect(detail.body.content).toContain("First paragraph. Typed again");
+  await expect(frameOf(page).locator(".plinth-doc__open")).toHaveCount(1);
+});
+
+test("a table cell typed into just before the socket drops is kept once, never as a second table", async ({
+  page,
+  browser,
+}) => {
+  test.setTimeout(60_000);
+  const s = await setup(page, TABLE_DOC);
+  // Every socket the page opens, so the test can drop the doc socket as a network blip would.
+  await page.addInitScript(() => {
+    const Base = window.WebSocket;
+    const all: WebSocket[] = [];
+    Object.assign(window, { __plinthSockets: all });
+    window.WebSocket = class extends Base {
+      constructor(url: string | URL, protocols?: string | string[]) {
+        super(url, protocols);
+        all.push(this);
+      }
+    } as typeof WebSocket;
+  });
+  await openAs(browser, s.owner, s.slug, page);
+  await startEditing(page);
+  await connected(page);
+  await frameOf(page).locator("td", { hasText: "Apples" }).click();
+  const cell = frameOf(page).locator('.plinth-doc__open td[contenteditable="true"]').first();
+  await expect(cell).toBeFocused();
+  await cell.press("End");
+  await cell.pressSequentially(" red");
+  // The room has the edit; it writes the draft to D1 a few seconds later. The socket drops first.
+  await page.waitForTimeout(600);
+  const content = page.frames().find((f) => f.url().includes("content.localhost"));
+  if (!content) throw new Error("no artifact frame");
+  await content.evaluate(() => {
+    const all = (window as unknown as { __plinthSockets: WebSocket[] }).__plinthSockets;
+    for (const ws of all) ws.close(4000);
+  });
+  await expect(saveStatus(page)).toContainText("Not connected");
+  await connected(page);
+  await cell.pressSequentially("!");
+  await cell.press("Escape");
+  await expect(frameOf(page).locator("table")).toHaveCount(1);
+  await publishChanges(page);
+  await expect(saveStatus(page)).toContainText("Published as v2");
+  const detail = await apiGet(page.request, `/artifacts/${s.id}`);
+  expect(detail.body.content).toContain("| Apples red! | 3 |");
+  expect(detail.body.content.split("| Name | Qty |")).toHaveLength(2);
+  expect(detail.body.content).not.toContain("| Apples red | 3 |");
+});
+
+test("an agent's version that moves or removes an open table: typing follows the table, an untouched one is never written back", async ({
+  page,
+  browser,
+}) => {
+  test.setTimeout(60_000);
+  const s = await setup(page, TABLE_DOC);
+  await openAs(browser, s.owner, s.slug, page);
+  await startEditing(page);
+  await connected(page);
+  const openCell = async () => {
+    await frameOf(page).locator("td", { hasText: "Apples" }).click();
+    const cell = frameOf(page).locator('.plinth-doc__open td[contenteditable="true"]').first();
+    await expect(cell).toBeFocused();
+    return cell;
+  };
+  const client = await mcpClient(s.token);
+  try {
+    // The table is open, nothing typed yet, when the agent adds two paragraphs above it.
+    let cell = await openCell();
+    const moved = TABLE_DOC.replace(
+      "Intro.\n",
+      "Intro.\n\nThe agent's first.\n\nThe agent's second.\n",
+    );
+    const v2 = await tool(client, "update_artifact", { id: s.id, content: moved, base_version: 1 });
+    expect(v2.isError, v2.text).toBe(false);
+    await expect(frameOf(page).locator("p", { hasText: "The agent's second." })).toBeVisible({
+      timeout: 10_000,
+    });
+    // Typing goes into the table where it is now, never over the agent's paragraphs.
+    cell = frameOf(page).locator('.plinth-doc__open td[contenteditable="true"]').first();
+    if ((await cell.count()) === 0) cell = await openCell();
+    await cell.press("End");
+    await cell.pressSequentially(" red");
+    await cell.press("Escape");
+    await publishChanges(page);
+    await expect(saveStatus(page)).toContainText("Published as v3");
+    let detail = await apiGet(page.request, `/artifacts/${s.id}`);
+    expect(detail.body.content).toBe(moved.replace("| Apples | 3 |", "| Apples red | 3 |"));
+
+    // Open again, untouched, when the agent rewrites the doc without the table.
+    await openCell();
+    const gone = "# Plan\n\nRewritten by the agent.\n\nAfter.\n";
+    const v4 = await tool(client, "update_artifact", { id: s.id, content: gone, base_version: 3 });
+    expect(v4.isError, v4.text).toBe(false);
+    await expect(frameOf(page).locator("p", { hasText: "Rewritten by the agent." })).toBeVisible({
+      timeout: 10_000,
+    });
+    // The old table is not put back as a new block: the page is the agent's version.
+    await expect(frameOf(page).locator("table")).toHaveCount(0);
+    await page.waitForTimeout(1000);
+    await expect(frameOf(page).locator("table")).toHaveCount(0);
+    detail = await apiGet(page.request, `/artifacts/${s.id}`);
+    expect(detail.body.current_version).toBe(4);
+    const live = await apiGet(page.request, `/artifacts/${s.id}/live`);
+    expect(live.body.draft?.dirty ?? false).toBe(false);
+  } finally {
+    await client.close();
+  }
 });
 
 test("leaving the page publishes what was typed: closing the tab makes the version", async ({

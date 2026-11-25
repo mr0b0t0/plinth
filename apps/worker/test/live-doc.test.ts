@@ -379,32 +379,145 @@ describe("doc socket: the D1 flush", () => {
     a.ws.close(1000);
   });
 
-  it("after the room loses its memory, a new gen: clients resync and get the flushed draft", async () => {
+  it("after the room loses its memory, the flushed draft with the gen its sockets were shown", async () => {
     const { id, ownerP } = await docSetup("# Plan\n");
     const a = await connectDoc(id, ownerP.cookie);
     const l = await lease(a, 0, 1);
     await edit(a, l.lease, "# Flushed");
     await releaseAndFlush(a, l.lease);
-    // As after an eviction or a hibernation wake: the in-memory draft is gone.
+    // As after a hibernation wake: the in-memory draft is gone, the sockets are not.
     await runInDurableObject(stubFor(id), async (room) => {
       (room as any).doc.loaded = null;
     });
     const ed = await person(id, "editor");
     const b = await connectDoc(id, ed.cookie);
-    expect(b.welcome.gen).not.toBe(a.welcome.gen);
+    // The lines are the ones A was shown: the room goes on with A's gen and rev.
+    expect(b.welcome.gen).toBe(a.welcome.gen);
     expect(b.welcome.rev).toBe(1);
     expect(b.text).toBe("# Flushed\n");
-    // A sees an op of another gen, so it asks for the draft again.
     const lb = await lease(b, 0, 1, 1);
     await edit(b, lb.lease, "# Again");
     const op = await a.nextOf("op");
-    expect(op.gen).not.toBe(a.welcome.gen);
-    a.send({ t: "sync" });
-    const again = await a.nextOf("welcome");
-    expect(again.gen).toBe(b.welcome.gen);
-    expect(again.rev).toBe(2);
+    expect(op).toMatchObject({ gen: a.welcome.gen, rev: 2, ins: "# Again" });
     a.ws.close(1000);
     b.ws.close(1000);
+  });
+
+  it("after the room loses its memory and its record of what the sockets saw, a new gen: they take the draft again", async () => {
+    const { id, ownerP } = await docSetup("# Plan\n");
+    const a = await connectDoc(id, ownerP.cookie);
+    const l = await lease(a, 0, 1);
+    await edit(a, l.lease, "# Flushed");
+    await releaseAndFlush(a, l.lease);
+    await runInDurableObject(stubFor(id), async (room) => {
+      const doc = (room as any).doc;
+      doc.loaded = null;
+      doc.synced = null;
+    });
+    const ed = await person(id, "editor");
+    const b = await connectDoc(id, ed.cookie);
+    expect(b.welcome.gen).not.toBe(a.welcome.gen);
+    expect(b.text).toBe("# Flushed\n");
+    // A was shown another gen: it is closed so that it reconnects and takes the draft again.
+    expect(await within(a.closed)).toMatchObject({ code: 4412 });
+    const a2 = await connectDoc(id, ownerP.cookie);
+    expect(a2.welcome.gen).toBe(b.welcome.gen);
+    expect(a2.welcome.rev).toBe(1);
+    a2.ws.close(1000);
+    b.ws.close(1000);
+  });
+});
+
+describe("doc socket: a version published while the room slept", () => {
+  const TABLE = "| Name | Qty |\n| --- | --- |\n| Apples | 3 |";
+  const V1 = `# Plan\n\nIntro.\n\n${TABLE}\n\nAfter.\n`;
+  // An agent's version adds two paragraphs above the table: its lines move down by four.
+  const V2 = `# Plan\n\nIntro.\n\nA new paragraph.\n\nAnother one.\n\n${TABLE}\n\nAfter.\n`;
+
+  /** The room's memory is gone, as after a hibernation wake, with the sockets still open. */
+  const sleep = (id: string) =>
+    runInDurableObject(stubFor(id), async (room) => {
+      (room as any).doc.loaded = null;
+    });
+
+  /** PUT `content` as an agent's next version, and wait until the room has heard of it. */
+  async function agentVersion(
+    id: string,
+    auth: Record<string, string>,
+    content: string,
+    n: number,
+  ) {
+    const res = await call(`/api/v1/artifacts/${id}`, {
+      method: "PUT",
+      headers: { ...auth, "Content-Type": "application/json" },
+      body: JSON.stringify({ content, base_version: n - 1 }),
+    });
+    expect(res.status).toBe(200);
+    for (let i = 0; i < 50; i++) {
+      // The draft loaded on it, or recorded as loaded on it (the room may have let it go since).
+      const base = await runInDurableObject(stubFor(id), async (room) => {
+        const doc = (room as any).doc;
+        return doc.loaded?.baseVersion ?? doc.synced?.base ?? null;
+      });
+      if (base === n) return;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    throw new Error("the room never heard of the version");
+  }
+
+  it("never writes a block over the new version's lines through a lease taken on the old ones", async () => {
+    const { id, owner, ownerP } = await docSetup(V1);
+    const a = await connectDoc(id, ownerP.cookie);
+    expect(a.text).toBe(V1);
+    // The person opens the table (lines 4 to 6) and has typed nothing yet: no draft row.
+    const held = await lease(a, 4, 7);
+    expect(held.t).toBe("leased");
+    await sleep(id);
+    await agentVersion(id, owner.auth, V2, 2);
+    // The person types in the table: the edit names the lease taken on v1's lines 4 to 6 (the
+    // room may have closed the socket already).
+    try {
+      a.send({ t: "edit", lease: held.lease, seq: 1, text: TABLE.replace("Apples", "Apples red") });
+    } catch {
+      // Closed: nothing is sent.
+    }
+    const b = await connectDoc(id, ownerP.cookie);
+    expect(b.welcome.base_version).toBe(2);
+    // v2's lines 4 to 6 are its new paragraphs: the table never goes over them.
+    expect(b.text).toBe(V2);
+    expect(b.welcome.leases).toEqual([]);
+    // The socket saw v1's lines: it is closed so that it resyncs, never left on them.
+    expect(await within(a.closed)).toMatchObject({ code: 4412 });
+    b.ws.close(1000);
+  });
+
+  it("a lease asked for on the old lines is never granted on the new ones", async () => {
+    const { id, owner, ownerP } = await docSetup(V1);
+    const a = await connectDoc(id, ownerP.cookie);
+    await sleep(id);
+    await agentVersion(id, owner.auth, V2, 2);
+    // The old rev (0) is the reloaded room's rev too: only a resync keeps the old lines out.
+    expect(await within(a.closed)).toMatchObject({ code: 4412 });
+    const b = await connectDoc(id, ownerP.cookie);
+    expect(b.text).toBe(V2);
+    b.ws.close(1000);
+  });
+
+  it("a wake with nothing changed keeps the sockets, their gen and their leases", async () => {
+    const { id, ownerP } = await docSetup(V1);
+    const a = await connectDoc(id, ownerP.cookie);
+    const held = await lease(a, 4, 7);
+    const ed = await edit(a, held.lease, TABLE.replace("Apples", "Apples red"));
+    expect(ed.t).toBe("op");
+    await runInDurableObject(stubFor(id), async (room) => {
+      await (room as any).doc.flushNow();
+    });
+    await sleep(id);
+    // The next keystroke wakes the room: same lines, same gen, the lease still held.
+    const again = await edit(a, held.lease, TABLE.replace("Apples", "Apples red!"), 2);
+    expect(again).toMatchObject({ t: "op", gen: a.welcome.gen, rev: 2, start: 4, del: 3 });
+    expect(await within(a.closed, 300)).toBe("timeout");
+    a.ws.close(1000);
   });
 });
 

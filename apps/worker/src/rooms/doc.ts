@@ -88,6 +88,8 @@ export interface DocSocket {
   email: string;
   doc: "none" | "watch" | "write";
   lease?: StoredLease | null;
+  /** The gen of the draft this socket was last sent (its welcome), so a reload can tell. */
+  gen?: string;
 }
 
 /** What the room lends the doc channel. */
@@ -104,6 +106,8 @@ export interface DocHost {
   gone(): void;
   /** The draft ended (an HTML deck became current with nothing to keep): close the doc sockets. */
   closeDocs(): void;
+  /** Close one doc socket so that it reconnects and takes the draft again (ROOM_CLOSE.resync). */
+  resync(ws: WebSocket): void;
 }
 
 /** What a checkpoint snapshot sees (services/live.ts). */
@@ -186,6 +190,24 @@ interface CheckpointLock {
 /** The object's storage key for the draft's epoch and the pending checkpoints. */
 export const DOC_STATE_KEY = "live-doc";
 
+/**
+ * Storage key of the lines the doc sockets were last shown (DocSync): written when the draft is
+ * loaded and after each flush, so a reload after a hibernation wake can tell whether the sockets
+ * still open saw the lines it loaded.
+ */
+export const DOC_SYNC_KEY = "live-doc-sync";
+
+/** The draft as the open sockets know it: its gen and rev, its base, its freeze and its lines. */
+interface DocSync {
+  artifactId: string;
+  gen: string;
+  rev: number;
+  base: number;
+  conflict: number | null;
+  /** SHA-256 of the lines. */
+  hash: string;
+}
+
 /** What DOC_STATE_KEY holds. */
 interface DocState {
   artifactId: string;
@@ -250,6 +272,8 @@ export class LiveDoc {
    * goes on with that epoch, since every change of epoch writes it.
    */
   private kept: { artifactId: string; epoch: string } | null = null;
+  /** DOC_SYNC_KEY as last written or read. */
+  private synced: DocSync | null = null;
   private restoring: Promise<void> | null = null;
   private needsFlush = false;
   private timer: ReturnType<typeof setTimeout> | null = null;
@@ -279,6 +303,7 @@ export class LiveDoc {
       let st: DocState | undefined;
       try {
         st = await this.host.storage.get<DocState>(DOC_STATE_KEY);
+        this.synced ??= (await this.host.storage.get<DocSync>(DOC_SYNC_KEY)) ?? null;
       } catch {
         console.error("live doc state read failed");
       }
@@ -378,8 +403,29 @@ export class LiveDoc {
     if (doc.conflictVersion !== null) {
       doc.conflictFiles = await this.filesBetween(doc, doc.baseVersion, doc.conflictVersion);
     }
+    // Sockets still open across a hibernation wake were shown the draft as DOC_SYNC_KEY records
+    // it. When the loaded lines are exactly those, the room goes on with that gen and rev, so they
+    // stay in step. Otherwise (a version published while the room slept, edits lost with an
+    // eviction) their lines are not the room's: they take the draft again (restoreLeases).
+    const hash = await sha256Hex(this.text(doc));
+    const was = this.synced;
+    // Only for sockets still open: with none, a reload starts afresh, as it always has.
+    const shown = this.host.sockets().some(({ s }) => s.gen !== undefined && s.gen === was?.gen);
+    if (
+      shown &&
+      was?.artifactId === artifactId &&
+      was.hash === hash &&
+      was.base === doc.baseVersion &&
+      was.conflict === doc.conflictVersion &&
+      doc.rev <= was.rev
+    ) {
+      doc.gen = was.gen;
+      doc.rev = was.rev;
+      doc.flushedRev = Math.max(doc.flushedRev, was.rev);
+    }
     this.loaded = doc;
     this.restoreLeases(doc);
+    this.writeSync(doc, doc.rev, hash);
     // A version published while nobody held the draft in memory (or whose notify was lost).
     if (doc.baseVersion < row.current_version) await this.outside(doc, row.current_version, null);
     return this.loaded;
@@ -430,10 +476,24 @@ export class LiveDoc {
     return sets ? summarizeFileChanges(fileChanges(asEntries(sets.a), asEntries(sets.b))) : null;
   }
 
-  /** Leases come back from the sockets' attachments; any that no longer fit are dropped. */
+  /**
+   * Leases come back from the sockets' attachments; any that no longer fit are dropped. A socket
+   * shown another gen of the draft (an earlier load) holds a range of lines the room may not have
+   * any more, and its requests are worked out from them: its lease ends and it is closed, so it
+   * reconnects and takes the draft again, and nothing it sends meanwhile is applied (message).
+   */
   private restoreLeases(doc: Loaded): void {
     const kept: StoredLease[] = [];
+    const stale: WebSocket[] = [];
     for (const { ws, s } of this.host.sockets()) {
+      if (s.gen !== undefined && s.gen !== doc.gen) {
+        stale.push(ws);
+        if (s.lease) {
+          s.lease = null;
+          this.host.save(ws, s);
+        }
+        continue;
+      }
       const l = s.lease;
       if (!l) continue;
       const fits =
@@ -447,6 +507,22 @@ export class LiveDoc {
         this.host.save(ws, s);
       }
     }
+    for (const ws of stale) this.host.resync(ws);
+  }
+
+  /** Record the draft as the sockets are shown it (DOC_SYNC_KEY), `hash` being its lines'. */
+  private writeSync(
+    doc: Loaded,
+    rev: number,
+    hash: string,
+    base = doc.baseVersion,
+    conflict = doc.conflictVersion,
+  ): void {
+    const sync: DocSync = { artifactId: doc.artifactId, gen: doc.gen, rev, base, conflict, hash };
+    this.synced = sync;
+    this.host.storage.put(DOC_SYNC_KEY, sync).catch(() => {
+      console.error("live doc sync write failed");
+    });
   }
 
   /** Drop the in-memory draft (the artifact is gone). A pending flush is cancelled. */
@@ -458,6 +534,8 @@ export class LiveDoc {
     this.saving = [];
     this.needsFlush = false;
     this.kept = null;
+    this.synced = null;
+    this.host.storage.delete(DOC_SYNC_KEY).catch(() => undefined);
     this.host.storage.delete(DOC_STATE_KEY).catch(() => {
       console.error("live doc state delete failed");
     });
@@ -510,6 +588,10 @@ export class LiveDoc {
   }
 
   private welcome(ws: WebSocket, s: DocSocket, doc: Loaded): void {
+    if (s.gen !== doc.gen) {
+      s.gen = doc.gen;
+      this.host.save(ws, s);
+    }
     const all = this.host.sockets();
     this.answer(ws, {
       t: "welcome",
@@ -594,6 +676,9 @@ export class LiveDoc {
   async message(ws: WebSocket, s: DocSocket, f: LiveDocClientFrame, artifactId: string) {
     const doc = await this.ensure(artifactId);
     if (!doc) return this.host.gone();
+    // Sent from lines of another gen (the room reloaded meanwhile, restoreLeases): never applied
+    // to these. The socket is closed so that it takes the draft again.
+    if (s.gen !== undefined && s.gen !== doc.gen) return this.host.resync(ws);
     // Its direct answers carry its id as `re`; a frame from an older tab has none, and they none.
     this.answering = f.id === undefined ? null : { ws, id: f.id };
     try {
@@ -894,6 +979,8 @@ export class LiveDoc {
     const DB = this.host.env.DB;
     const rev = doc.rev;
     const live = this.text(doc);
+    const base = doc.baseVersion;
+    const conflict = doc.conflictVersion;
     // What is stored is the type's source form of the lines (identity for docs, decks and sheets).
     const text = doc.rules.fromLive(live);
     const atBase = live === doc.baseText && doc.conflictVersion === null;
@@ -963,6 +1050,9 @@ export class LiveDoc {
     if (this.loaded !== doc) return;
     doc.flushedRev = Math.max(doc.flushedRev, rev);
     this.broadcast({ t: "flushed", rev: doc.flushedRev });
+    // What a reload finds is what the sockets were shown at `rev` (DOC_SYNC_KEY).
+    const hash = await sha256Hex(live);
+    if (this.loaded === doc) this.writeSync(doc, rev, hash, base, conflict);
   }
 
   // ---------- versions published from outside ----------

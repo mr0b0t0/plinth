@@ -201,6 +201,9 @@ function live(
       editors,
       publishable: RULES?.unpublishable(text) === null && !(editor?.unsavable ?? false),
       ...(editor?.unsavable ? { unsavable: true as const } : {}),
+      // Typing on its way to the room (in the send delay, or sent and not acknowledged yet):
+      // Publish changes and Cmd/Ctrl+S wait for it before the checkpoint is taken.
+      ...(c && (editor?.sending || c.sending) ? { pending: true as const } : {}),
     };
     post({ type: "live", ...s });
   };

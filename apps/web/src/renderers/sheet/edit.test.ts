@@ -533,6 +533,81 @@ describe("room editing", () => {
     expect(text("A5")).toBe("Total");
   });
 
+  it("after a dropped socket, a row the room acknowledged but had not flushed is taken again where it is", async () => {
+    vi.useFakeTimers();
+    const { ws } = start();
+    dbl(cell("B3"));
+    ws.frame({ t: "leased", lease: "l1", start: 2, end: 3, holder: "s1", by: YOU.email });
+    type(field() as HTMLInputElement, "6");
+    vi.advanceTimersByTime(300);
+    expect(ws.sent.at(-1)).toEqual({
+      t: "edit",
+      lease: "l1",
+      seq: 1,
+      text: '["Pears",6,0.5,false]',
+    });
+    ws.frame({
+      t: "op",
+      gen: "g1",
+      rev: 4,
+      lease: "l1",
+      start: 2,
+      del: 1,
+      ins: '["Pears",6,0.5,false]',
+      by: "s1",
+      seq: 1,
+      re: ws.idOf("edit"),
+    });
+    // The socket drops before the room's flush; the room keeps running with the edit.
+    ws.onclose?.({ code: 1006 } as CloseEvent);
+    vi.advanceTimersByTime(60_000);
+    const again = FakeSocket.all.at(-1) as FakeSocket;
+    expect(again).not.toBe(ws);
+    const lines = [...LINES];
+    lines[2] = '["Pears",6,0.5,false]';
+    again.frame({
+      t: "welcome",
+      v: 1,
+      you: YOU,
+      gen: "g1",
+      rev: 4,
+      base_version: 2,
+      flushed_rev: 3,
+      conflict_version: null,
+      last_by_you: true,
+      leases: [],
+      peers: [],
+    });
+    again.frame({ t: "text", gen: "g1", part: 0, of: 1, chunk: lines.join("\n") });
+    await Promise.resolve();
+    // Found by the text the room acknowledged: the same row, asked for again, the field kept.
+    expect(again.sent.at(-1)).toEqual({ t: "lease", rev: 4, start: 2, end: 3 });
+    again.frame({ t: "leased", lease: "l2", start: 2, end: 3, holder: "s1", by: YOU.email });
+    await Promise.resolve();
+    expect(field()?.value).toBe("6");
+    expect(notice()).not.toContain("changed meanwhile");
+  });
+
+  it("the save status settles after a keystroke that changes no row", async () => {
+    vi.useFakeTimers();
+    const { f, ws } = start();
+    dbl(cell("B3"));
+    ws.frame({ t: "leased", lease: "l1", start: 2, end: 3, holder: "s1", by: YOU.email });
+    // The value it already has: the row line is the same, so nothing is sent.
+    type(field() as HTMLInputElement, "5");
+    await Promise.resolve();
+    const lastLive = () =>
+      f.parent.postMessage.mock.calls
+        .map((c) => c[0] as Record<string, unknown>)
+        .filter((m) => m.type === "live")
+        .at(-1);
+    expect(lastLive()?.unflushed).toBe(true);
+    vi.advanceTimersByTime(300);
+    await Promise.resolve();
+    expect(ws.sent.filter((s) => s.t === "edit")).toEqual([]);
+    expect(lastLive()?.unflushed).toBe(false);
+  });
+
   it("a freeze that closes the cell quotes what the room did not get, and only that", async () => {
     const { ws } = start();
     dbl(cell("B3"));
