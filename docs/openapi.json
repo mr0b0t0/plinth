@@ -1625,6 +1625,7 @@
           "401": { "$ref": "#/components/responses/E401" },
           "403": { "$ref": "#/components/responses/E403" },
           "404": { "$ref": "#/components/responses/E404" },
+          "429": { "$ref": "#/components/responses/E429" },
           "default": { "$ref": "#/components/responses/Error" }
         },
         "security": [
@@ -1655,6 +1656,7 @@
           },
           "400": { "$ref": "#/components/responses/E400" },
           "401": { "$ref": "#/components/responses/E401" },
+          "429": { "$ref": "#/components/responses/E429" },
           "default": { "$ref": "#/components/responses/Error" }
         },
         "security": [

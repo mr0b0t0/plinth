@@ -2808,7 +2808,7 @@ function operations(): Operation[] {
       scope: "mentions:watch",
       body: "CreateMentionWatchInput",
       ok: [201, "MentionWatchInfo"],
-      errors: [400, 401, 403, 404],
+      errors: [400, 401, 403, 404, 429],
     },
     {
       method: "post",
@@ -2820,7 +2820,7 @@ function operations(): Operation[] {
       scope: "mentions:watch",
       body: "PollMentionWatchesInput",
       ok: [200, "MentionWatchPolls"],
-      errors: [400, 401],
+      errors: [400, 401, 429],
     },
     {
       method: "delete",

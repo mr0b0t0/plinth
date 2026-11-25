@@ -3566,6 +3566,9 @@ the strongest way it allows. Design notes: `docs/superpowers/specs/2026-11-25-me
   `events` capability; `webhook-id` equal to `eventId`; error codes -32011 to -32015) and SEP-3415
   (the `extensions` entry; a random `webhook-id` per message; -32023 to -32027), answering each
   request in the dialect it declared. A delivered event marks the mention "sent" like an offer.
+- **Limits.** A connection may start 300 watches an hour (`MENTION_WATCH.startsPerConnectionPerHour`,
+  MCP tasks and relay watches together) and make 1200 relay polls every ten minutes; past either it
+  gets `rate_limited`.
 - **What people see.** A pending request's chip in the thread says `sent` while an agent session
   has it and `waiting` while none does (`delivery` on comment mentions and mention tasks).
 - **Lifetimes.** A relay watch nobody polls for 15 minutes ends; ended watches and settled

@@ -29,6 +29,7 @@ import { and, asc, desc, eq, gt, inArray, isNull, lt, or, type SQL, sql } from "
 import { artifacts, type MentionWatchRow, mentionTasks, mentionWatches } from "../db/schema.ts";
 import { randomString } from "../lib/crypto.ts";
 import { ApiError, notFound, unauthorized } from "../lib/errors.ts";
+import { enforce } from "../lib/ratelimit.ts";
 import { mayWatchMentions, ownsWatch, type Principal, watchHears } from "../policy.ts";
 import { findArtifact } from "./artifacts.ts";
 import type { Ctx } from "./context.ts";
@@ -100,6 +101,17 @@ async function ownArtifact(ctx: Ctx, p: AgentPrincipal, ref: string) {
   return a;
 }
 
+/** The per-connection rate of new watches. */
+function enforceStarts(ctx: Ctx, connectionId: string) {
+  return enforce(
+    ctx.env.DB,
+    `mention-watch-start:${connectionId}`,
+    MENTION_WATCH.startsPerConnectionPerHour,
+    3600,
+    "Too many mention watches started; try again later",
+  );
+}
+
 /** End the oldest working watches of a connection past its cap ("made room for a newer watch"). */
 async function makeRoom(ctx: Ctx, connectionId: string, kind: WatchKind, now: number) {
   const cap =
@@ -144,6 +156,7 @@ export async function startTaskWatch(ctx: Ctx, artifactRef: string): Promise<Men
   const artifact = await ownArtifact(ctx, p, artifactRef);
   const now = Date.now();
   const connectionId = p.connectionId as string;
+  await enforceStarts(ctx, connectionId);
   await ctx.db
     .update(mentionWatches)
     .set({ status: "cancelled", completedAt: iso(now) })
@@ -192,6 +205,7 @@ export async function startRelayWatch(
   const artifact = input.artifact_id ? await ownArtifact(ctx, p, input.artifact_id) : null;
   const now = Date.now();
   const connectionId = p.connectionId as string;
+  await enforceStarts(ctx, connectionId);
   await makeRoom(ctx, connectionId, "relay", now);
   const row: MentionWatchRow = {
     id: watchId(),
@@ -422,6 +436,13 @@ async function finish(
  */
 export async function pollRelayWatches(ctx: Ctx, ids: string[]): Promise<MentionWatchPoll[]> {
   const p = requireAgent(ctx);
+  await enforce(
+    ctx.env.DB,
+    `mention-watch-poll:${p.connectionId ?? p.userId}`,
+    MENTION_WATCH.relayPollsPerConnectionPer10Min,
+    600,
+    "Too many polls; try again later",
+  );
   const rows = await ctx.db
     .select()
     .from(mentionWatches)
