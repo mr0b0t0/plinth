@@ -26,16 +26,16 @@ async function classicScrollbars(page: Page): Promise<void> {
   });
 }
 
-/** What must not change when a menu opens. */
-function layout(page: Page) {
-  return page.evaluate(() => {
+/** What must not change when a menu opens; `triggerId` is the menu button's id. */
+function layout(page: Page, triggerId: string) {
+  return page.evaluate((id) => {
     const root = document.documentElement;
     const box = (el: Element | null) => {
       if (!el) return null;
       const r = el.getBoundingClientRect();
       return [r.x, r.y, r.width, r.height].map((n) => Math.round(n * 10) / 10);
     };
-    const trigger = document.activeElement?.closest("[aria-haspopup=menu]") ?? null;
+    const trigger = document.getElementById(id);
     return {
       viewport: [root.clientWidth, root.clientHeight],
       scroll: [root.scrollWidth, root.scrollHeight, window.scrollX, window.scrollY],
@@ -44,28 +44,32 @@ function layout(page: Page) {
       heading: box(document.querySelector("h1")),
       trigger: box(trigger),
     };
-  });
+  }, triggerId);
 }
 
 /** Open every visible menu button on the page, one at a time, and check nothing moves. */
 async function openEveryMenu(page: Page, where: string): Promise<number> {
-  const triggers = page.locator("[aria-haspopup=menu]:visible");
-  const count = await triggers.count();
-  for (let i = 0; i < count; i++) {
-    const trigger = triggers.nth(i);
+  // Resolved once, by id: a button that renders later (the account menu once the session loads)
+  // must not shift the others' places in the list halfway through.
+  const ids = await page
+    .locator("[aria-haspopup=menu]:visible")
+    .evaluateAll((els) => els.map((el) => el.id));
+  for (const id of ids) {
+    const trigger = page.locator(`[id="${id}"]`);
     const name = (await trigger.getAttribute("aria-label")) ?? (await trigger.textContent());
-    // Focus first, so the trigger's own box is measured before and after.
+    // Focus scrolls the trigger into view; measure after that. Then open it from the keyboard
+    // (Enter clicks the button, the same path as a pointer), not with locator.click(): when its
+    // hit test misses, Playwright scrolls the trigger to another edge of the screen and clicks
+    // again, and that scroll is the test's own, not the menu's. It happens at phone width on a
+    // page a few pixels wider than the screen (/design on Linux fonts).
     await trigger.focus();
-    const before = await layout(page);
-    await trigger.click();
-    const menu = page.locator(`[role=menu][aria-labelledby="${await trigger.getAttribute("id")}"]`);
+    const before = await layout(page, id);
+    await page.keyboard.press("Enter");
+    const menu = page.locator(`[role=menu][aria-labelledby="${id}"]`);
     await expect(menu, `${where}: ${name}`).toBeVisible();
     // The list's entrance animation has finished: compare the settled page.
     await page.waitForTimeout(200);
-    const after = await layout(page);
-    expect({ ...after, trigger: after.trigger ?? before.trigger }, `${where}: ${name}`).toEqual(
-      before,
-    );
+    expect(await layout(page, id), `${where}: ${name}`).toEqual(before);
     const r = await menu.boundingBox();
     const [vw, vh] = before.viewport as [number, number];
     expect(r, `${where}: ${name}`).not.toBeNull();
@@ -78,7 +82,7 @@ async function openEveryMenu(page: Page, where: string): Promise<number> {
     await page.keyboard.press("Escape");
     await expect(menu).toHaveCount(0);
   }
-  return count;
+  return ids.length;
 }
 
 async function shot(page: Page, name: string): Promise<void> {
@@ -149,5 +153,17 @@ test("opening a menu does not move or resize the page", async ({ page, context }
   // The design system page's menus, in both of its theme panels.
   await page.goto("/design");
   await expect(page.getByRole("heading", { name: "Design system", level: 1 })).toBeVisible();
+  // Signed in: wait for the session, so the sidebar is complete before anything is measured.
+  if (test.info().project.name !== "mobile")
+    await expect(page.getByRole("button", { name: /^Account:/ })).toBeVisible();
   expect(await openEveryMenu(page, "design")).toBeGreaterThanOrEqual(1);
+
+  // A page a little wider than the screen (on a phone the layout viewport is then wider than the
+  // visual one), as /design is with some fonts.
+  await page.evaluate(() => {
+    const wide = document.createElement("div");
+    wide.style.cssText = `width:${document.documentElement.clientWidth + 9}px;height:1px`;
+    document.body.append(wide);
+  });
+  expect(await openEveryMenu(page, "design, wider than the screen")).toBeGreaterThanOrEqual(1);
 });
