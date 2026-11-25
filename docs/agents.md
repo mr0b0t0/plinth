@@ -153,7 +153,7 @@ Connections page. If you added the bare server before, run `claude mcp logout pl
 the Connections page.
 
 **Your own instance.** The plugin has one option, **Plinth instance** (`instance_url`): the origin
-its server and mention watcher use, `https://plinth.aconite.io` by default. Claude Code asks for it
+its server and mention relay use, `https://plinth.aconite.io` by default. Claude Code asks for it
 when you enable the plugin in a session. From a terminal, set it as you install:
 
 ```sh
@@ -186,7 +186,7 @@ configuration directory has its own plugins and MCP servers:
   value as the sessions, or run `/plugin` inside a session of that profile.
 - `claude mcp add` run without the variable lands in `~/.claude.json`, the default profile, and
   sessions of another profile never see it.
-- The sign-ins that Plinth's own programs keep (the mention watcher and the CLI) live in
+- The sign-ins that Plinth's own programs keep (the mention relay and the CLI) live in
   `~/.config/plinth/` and are shared by every profile on the computer.
 
 **Where pages go.** Claude Code has its own artifacts and document tools, and its instructions for
@@ -200,15 +200,15 @@ a page to send or keep, five where Plinth should stay out): without the note and
 description, 0 of 6 went to Plinth; with the new skill description alone, 2 of 6; with the note,
 6 of 6, and none of the five others did.
 
-**Mentions without asking.** Run `/plinth:watch-mentions` once to connect the mention watcher. A
-background monitor in every session then checks Plinth every 30 seconds and wakes Claude when a new
-`@claude` request arrives, and a session-start hook lists the requests still waiting. Claude Code
-does not share its MCP login with other programs, so the watcher has a connection of its own: one
-browser approval, the `mentions` scope only (it sees that requests exist; it cannot read or change
-artifacts), revocable on the Connections page. Its tokens live in `~/.config/plinth/` (mode 0600).
-Each request is announced once per computer, not once per open session. It needs Node.js 18+ on
-the PATH and stays silent without it. The source is `integrations/watcher/`; Codex is not covered
-yet (its plugin hooks need separate trust and a different config).
+**Mentions without asking.** After Claude publishes or updates an artifact, it watches that
+artifact's comments, the way Claude's own artifacts do: the result says to call `watch_mentions`,
+which starts an MCP task that completes when a comment mentions `@claude`, and the idle session
+wakes up to handle it ([Mention wake-ups](spec.md#mention-wake-ups-decided-2026-11-25)). Nothing to
+connect. The plugin's mention relay also runs a monitor in every session that catches requests on
+artifacts no open session watches, and a session-start hook lists what waits; it needs one browser
+approval per computer (`/plinth:watch-mentions`, the `mentions:watch` scope: it sees that requests
+wait and can't read comments or artifacts), revocable on the Connections page. Its tokens live in
+`~/.config/plinth/` (mode 0600). It needs Node.js 18+ on the PATH and stays silent without it.
 
 ### Codex
 
@@ -642,10 +642,23 @@ older connection that can answer mentions has the same handle, the name is `Clau
 a connection of another type, or the name does not start and end with a Latin letter or digit:
 letters of other scripts are dropped from a handle, and a mention drops a final dot).
 
-**Picking a request up.** In Claude Code with the Plinth plugin, the mention watcher wakes the
-session when a request arrives (`/plinth:watch-mentions`). Every other harness checks when the
-person asks ("check my Plinth mentions"), with `list_mentions` in a session. Plinth calling an
-agent by itself (push mode) is on the roadmap ([spec](spec.md#comments-and-agent-mentions)).
+**Picking a request up.** The session that published the artifact picks it up without being
+asked ([Mention wake-ups](spec.md#mention-wake-ups-decided-2026-11-25)), each client the strongest
+way it allows:
+
+| Client | How the request reaches it |
+| --- | --- |
+| Claude Code, the Agent SDK, claude.ai | `watch_mentions`, an MCP task the agent starts after publishing; the idle session wakes when it completes |
+| Codex (CLI, app, IDE), with the Plinth plugin | The mention relay queues a message into the thread (`codex queue`); Codex asks you to review the plugin's hooks once in `/hooks` |
+| T3 Code (Claude or Codex threads), with the plugin in the Claude Code and Codex it runs | The relay sends the thread a message (`t3 thread send`) |
+| Cursor, Copilot CLI, Gemini CLI, with the Plinth plugin or extension | Handed over when a turn ends, or when the next session starts; they can't be woken while idle |
+| ChatGPT (Work chats, dots) | Subscribe once to the `mention.created` event ("watch my Plinth mentions and make the requested changes") |
+
+The relay needs one browser approval per computer, which an agent asks for the first time it
+publishes in one of those clients. What wakes a session holds ids only; the agent reads the request
+with `claim_mention`. The comment's chip says `sent` while a session has it and `waiting` while
+none does. Elsewhere (Antigravity, one-shot runs) a request waits until someone asks ("check my
+Plinth mentions").
 
 **People hand work on, not agents.** A comment or reply an agent writes never creates a request,
 whatever it mentions, so agents cannot summon each other or loop. To split work, a person mentions
@@ -728,8 +741,10 @@ Everything above comes from these sources. Edit those, never the outputs:
 - **`packages/shared/src/harnesses.ts`**: the registry. Each harness's label, whether it reaches a
   local instance, its own artifact feature, how it connects, and how it gets the guidance. Plugin
   name and version live here too.
-- **`integrations/watcher/`**: the Claude Code mention watcher script and its
-  `/plinth:watch-mentions` skill, copied into the plugin with a monitor and a SessionStart hook.
+- **`integrations/watcher/`**: the mention relay (`plinth-mentions.mjs`, `plinth-relay.mjs`) and its
+  `/plinth:watch-mentions` skill, copied into the Claude Code plugin (with a monitor and hooks), the
+  Codex plugin (`integrations/plugin-codex`), the Cursor plugin and the Gemini extension, each with
+  hooks in its own client's format, and the Copilot CLI hooks in `integrations/plugin/com.github.copilot`.
 - **`integrations/skill/plinth-artifacts/SKILL.md`**: the Plinth way, written once. It restates
   server behaviour (the CDN allowlist, size limits, the iframe sandbox, the private default, the
   update and comment tools); when one of those changes, change the skill in the same commit.

@@ -84,6 +84,7 @@ const NAMES = [
   "list_mentions",
   "claim_mention",
   "reply_comment",
+  "watch_mentions",
   "start_upload",
   "get_artifact_stats",
   "list_artifact_data",
@@ -96,7 +97,7 @@ const NAMES = [
 ];
 
 const RESOURCES = "78c96b166894144d57e68ef977b2e7e414eab8ea233a9c35c2973cfe3b5bc9a7";
-const INSTRUCTIONS = "20830bac6f039d062d40b37f827ee33c9ab8a5aa9591e59171e03489a5d3b1aa";
+const INSTRUCTIONS = "17f43cd8a808cc326e654e00f5821f10d793038edd4342509782c50b583a4f40";
 /** Every pin but "category sharing on" is the surface with category sharing off. */
 const OFF = { ALLOW_CATEGORY_SHARING: "false" };
 
@@ -104,7 +105,7 @@ describe("MCP surface (golden)", () => {
   it("origin isolation", async () => {
     expect(await surface(OFF)).toEqual({
       names: NAMES,
-      tools: "3f92d2dcdb4055adaa8bce4f9245f3b5fded3a3326c321322229d1708b483945",
+      tools: "0f881de63b2abd9b08b3e22e844623d0b809b1e38da7c8a0004068a53fb3964a",
       resources: RESOURCES,
       preview: "86970cd4f2b511fa6d96a9f44ee54a25ba3e3d26f303fc3db16555b9adba8491",
       instructions: INSTRUCTIONS,
@@ -114,7 +115,7 @@ describe("MCP surface (golden)", () => {
   it("opaque isolation", async () => {
     expect(await surface({ ...OFF, CONTENT_ISOLATION: "opaque" })).toEqual({
       names: NAMES,
-      tools: "41a19bb25bf2f5a1d0a45ddce58d672737421c9f1bd53981df79fa95395ea38c",
+      tools: "f48c14ed4389ddb710823f98ac2b6eb3d065b3064f1b0f135fb5677b55d1b7af",
       resources: RESOURCES,
       preview: "ca2fef7357c958f9d3b41340f260ff55eed0173e95303860bac71cc03244c69c",
       instructions: INSTRUCTIONS,
@@ -126,7 +127,7 @@ describe("MCP surface (golden)", () => {
       await surface({ ...OFF, STAGING_CONTENT_FALLBACK: "true", CONTENT_ISOLATION: "opaque" }),
     ).toEqual({
       names: NAMES,
-      tools: "139b6b6f528f43718c682553094b296badd3932cc429e417213b9fe26bb367bf",
+      tools: "c758f9f8fe33b142057870a07a8fe1912f0d033d27665207f84c839eeffc7946",
       resources: RESOURCES,
       preview: "ca2fef7357c958f9d3b41340f260ff55eed0173e95303860bac71cc03244c69c",
       instructions: INSTRUCTIONS,
@@ -136,10 +137,10 @@ describe("MCP surface (golden)", () => {
   it("category sharing on (the default): the share note and the instructions' sentence", async () => {
     expect(await surface()).toEqual({
       names: NAMES,
-      tools: "3d6a77ee1b795e26844c98195d76daeb990fe1185765ff4267b9b583722f30c6",
+      tools: "bcb7ea60000ec5b1e27544b4dff6ac6672dce50f1b6652fd4015eb0cbf83bfab",
       resources: RESOURCES,
       preview: "86970cd4f2b511fa6d96a9f44ee54a25ba3e3d26f303fc3db16555b9adba8491",
-      instructions: "b56c72071108dc740f7eafea6ec0f31e433635807a87b688f094fe62045560d5",
+      instructions: "463d5eb9693d6f0c69d94a381db3cd1f55d5690db020e8c3eb43df471a8cff09",
     });
   });
 });

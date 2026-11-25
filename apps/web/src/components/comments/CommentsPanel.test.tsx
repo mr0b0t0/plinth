@@ -147,7 +147,9 @@ describe("CommentsPanel", () => {
       body: "**Bold** ask @claude please",
       version_number: 1,
       anchor: { selector: "h1", text: "The heading", x: 0.5, y: 0.5 },
-      mentions: [{ task_id: "t1", target: "@claude", state: "done", result_version: 3 }],
+      mentions: [
+        { task_id: "t1", target: "@claude", state: "done", delivery: null, result_version: 3 },
+      ],
     });
     const reply = comment({
       parent_id: root.id,
@@ -157,9 +159,28 @@ describe("CommentsPanel", () => {
     });
     const other = comment({
       mentions: [
-        { task_id: "t2", target: "@codex", state: "pending", result_version: null },
-        { task_id: "t3", target: "@work-claude", state: "claimed", result_version: null },
-        { task_id: "t4", target: "@claude", state: "failed", result_version: null },
+        {
+          task_id: "t2",
+          target: "@codex",
+          state: "pending",
+          delivery: "waiting" as const,
+          result_version: null,
+        },
+        {
+          task_id: "t5",
+          target: "@claude",
+          state: "pending",
+          delivery: "sent" as const,
+          result_version: null,
+        },
+        {
+          task_id: "t3",
+          target: "@work-claude",
+          state: "claimed",
+          delivery: null,
+          result_version: null,
+        },
+        { task_id: "t4", target: "@claude", state: "failed", delivery: null, result_version: null },
       ],
     });
     const { panel } = renderPanel({ items: [root, reply, other], calls: [] });
@@ -179,7 +200,11 @@ describe("CommentsPanel", () => {
     expect(done?.textContent).toContain("done");
     const link = within(done as HTMLElement).getByRole("link", { name: "v3" });
     expect(link.getAttribute("href")).toBe("/a/my-art-abc/v/3");
-    expect(panel.querySelector('[data-state="pending"]')?.textContent).toContain("pending");
+    // A pending request says whether an agent session has it.
+    expect(panel.querySelector('[data-state="pending"]')?.textContent).toContain("waiting");
+    expect(
+      [...panel.querySelectorAll('[data-state="pending"]')].map((e) => e.textContent).join(" "),
+    ).toContain("sent");
     expect(panel.querySelector('[data-state="claimed"]')?.textContent).toContain("claimed");
     expect(panel.querySelector('[data-state="failed"]')?.textContent).toContain("failed");
     // Relative date with the full timestamp as a tooltip.
@@ -243,7 +268,15 @@ describe("CommentsPanel", () => {
       post: (body) =>
         comment({
           body: String(body.body),
-          mentions: [{ task_id: "t9", target: "@claude", state: "pending", result_version: null }],
+          mentions: [
+            {
+              task_id: "t9",
+              target: "@claude",
+              state: "pending",
+              delivery: "waiting" as const,
+              result_version: null,
+            },
+          ],
         }),
     };
     const { panel } = renderPanel(server);
@@ -267,7 +300,7 @@ describe("CommentsPanel", () => {
     });
     expect(chip.textContent).toContain("@claude");
     expect((box as HTMLTextAreaElement).value).toBe("");
-    await waitFor(() => expect(panel.textContent).toContain("Comment posted. @claude pending."));
+    await waitFor(() => expect(panel.textContent).toContain("Comment posted. @claude waiting."));
   });
 
   it("offers @claude and @codex with keyboard navigation", async () => {

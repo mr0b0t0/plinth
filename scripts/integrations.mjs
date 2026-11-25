@@ -135,6 +135,8 @@ const WATCHER = "scripts/plinth-mentions.mjs";
 const watcherCmd = (sub) => `node "\${CLAUDE_PLUGIN_ROOT}/${WATCHER}" ${sub}`;
 const watcherSource = (f) => readFileSync(path.join(root, "integrations/watcher", f), "utf8");
 outputs.set(`integrations/plugin/${WATCHER}`, watcherSource("plinth-mentions.mjs"));
+// The relay (sessions, watches, waking clients from outside) that plinth-mentions.mjs imports.
+outputs.set("integrations/plugin/scripts/plinth-relay.mjs", watcherSource("plinth-relay.mjs"));
 // The watcher imports the shared OAuth client from next to itself.
 outputs.set("integrations/plugin/scripts/plinth-oauth.mjs", watcherSource("plinth-oauth.mjs"));
 outputs.set(
@@ -164,7 +166,7 @@ outputs.set(
   "integrations/plugin/hooks/hooks.json",
   json({
     description:
-      "Say where pages go (Plinth) and list Plinth @mention requests waiting when a session starts",
+      "Say where pages go (Plinth), list Plinth @mention requests waiting when a session starts, and in T3 Code bring later ones to the session through the mention relay",
     hooks: {
       SessionStart: [
         {
@@ -177,9 +179,34 @@ outputs.set(
               timeout: 5,
             },
             {
+              // Requests waiting; in T3 Code, also registers the session with the mention relay.
               type: "command",
-              command: `command -v node >/dev/null 2>&1 && ${watcherCmd("pending")} 2>/dev/null; exit 0`,
+              command: `command -v node >/dev/null 2>&1 && ${watcherCmd("hook claude session-start")} 2>/dev/null; exit 0`,
               timeout: 15,
+            },
+          ],
+        },
+      ],
+      // In T3 Code (no MCP tasks there): watch what this session publishes, through the relay.
+      PostToolUse: [
+        {
+          matcher: "mcp__.*__(publish_artifact|update_artifact)",
+          hooks: [
+            {
+              type: "command",
+              command: `command -v node >/dev/null 2>&1 && ${watcherCmd("hook claude post-tool")} 2>/dev/null; exit 0`,
+              timeout: 15,
+            },
+          ],
+        },
+      ],
+      SessionEnd: [
+        {
+          hooks: [
+            {
+              type: "command",
+              command: `command -v node >/dev/null 2>&1 && ${watcherCmd("hook claude session-end")} 2>/dev/null; exit 0`,
+              timeout: 10,
             },
           ],
         },
@@ -187,6 +214,95 @@ outputs.set(
     },
   }),
 );
+// ---------- The mention relay's hooks in other clients (docs/spec.md "Mention wake-ups") ----------
+// Each client runs `plinth-mentions.mjs hook <client> <event>` from its own hooks file, in its own
+// format, with the scripts copied next to it. The client is named in the command: Codex and
+// Copilot also set CLAUDE_PLUGIN_ROOT, so an environment variable can't tell them apart.
+const relayScripts = (dir) => {
+  outputs.set(`${dir}/scripts/plinth-mentions.mjs`, watcherSource("plinth-mentions.mjs"));
+  outputs.set(`${dir}/scripts/plinth-relay.mjs`, watcherSource("plinth-relay.mjs"));
+  outputs.set(`${dir}/scripts/plinth-oauth.mjs`, watcherSource("plinth-oauth.mjs"));
+};
+const relayHook = (root, client, event) =>
+  `command -v node >/dev/null 2>&1 && node "${root}/scripts/plinth-mentions.mjs" hook ${client} ${event} 2>/dev/null; exit 0`;
+
+// Copilot CLI installs integrations/plugin and reads plugin hooks from its namespace folder
+// (com.github.copilot/hooks/hooks.json), in its own format. Hooks run from the plugin root.
+outputs.set(
+  "integrations/plugin/com.github.copilot/hooks/hooks.json",
+  json({
+    version: 1,
+    hooks: {
+      sessionStart: [
+        {
+          type: "command",
+          bash: relayHook("$PLUGIN_ROOT", "copilot", "session-start"),
+          timeoutSec: 15,
+        },
+      ],
+      postToolUse: [
+        {
+          type: "command",
+          matcher: ".*(publish_artifact|update_artifact)",
+          bash: relayHook("$PLUGIN_ROOT", "copilot", "post-tool"),
+          timeoutSec: 15,
+        },
+      ],
+      agentStop: [
+        { type: "command", bash: relayHook("$PLUGIN_ROOT", "copilot", "stop"), timeoutSec: 15 },
+      ],
+      sessionEnd: [
+        {
+          type: "command",
+          bash: relayHook("$PLUGIN_ROOT", "copilot", "session-end"),
+          timeoutSec: 10,
+        },
+      ],
+    },
+  }),
+);
+
+// Codex: its own plugin folder with a .codex-plugin manifest, so its hooks load (Codex asks the
+// person to review them once, in /hooks). Same skill and hosted server as the portable plugin.
+const CODEX = "integrations/plugin-codex";
+outputs.set(
+  `${CODEX}/.codex-plugin/plugin.json`,
+  json({
+    name: PLUGIN.name,
+    version: PLUGIN.version,
+    description: PLUGIN.description,
+    keywords: [...PLUGIN.keywords],
+    skills: "./skills/",
+    mcpServers: "./.mcp.json",
+    hooks: "./hooks/hooks.json",
+    interface: reg.CODEX_INTERFACE,
+  }),
+);
+outputs.set(`${CODEX}/.mcp.json`, json({ mcpServers: { [SERVER_NAME]: { url: hostedMcp } } }));
+const codexHook = (event, matcher, timeout = 15) => ({
+  ...(matcher ? { matcher } : {}),
+  hooks: [{ type: "command", command: relayHook("$PLUGIN_ROOT", "codex", event), timeout }],
+});
+outputs.set(
+  `${CODEX}/hooks/hooks.json`,
+  json({
+    description:
+      "Plinth's mention relay: bring comments that mention this agent to the Codex session that published the artifact",
+    hooks: {
+      SessionStart: [codexHook("session-start", "startup|resume|clear")],
+      PostToolUse: [codexHook("post-tool", "mcp__.*__(publish_artifact|update_artifact)")],
+      // Codex gives SessionEnd hooks three seconds at most.
+      SessionEnd: [codexHook("session-end", undefined, 3)],
+    },
+  }),
+);
+relayScripts(CODEX);
+setSkillFolder(`${CODEX}/skills/${SKILL_NAME}`, skill);
+outputs.set(
+  `${CODEX}/skills/watch-mentions/SKILL.md`,
+  readFileSync(path.join(root, "integrations/watcher/watch-mentions/SKILL.md"), "utf8"),
+);
+
 outputs.set(
   "integrations/plugin/mcp.json",
   json({
@@ -227,7 +343,9 @@ outputs.set(
     plugins: [
       {
         name: PLUGIN.name,
-        source: { source: "local", path: "./integrations/plugin" },
+        // Codex reads hooks only from a plugin with its own manifest (.codex-plugin), never from
+        // an Agent Plugins one, so it gets the folder built below.
+        source: { source: "local", path: "./integrations/plugin-codex" },
         policy: { installation: "AVAILABLE", authentication: "ON_INSTALL" },
         category: "Productivity",
       },
@@ -240,6 +358,7 @@ outputs.set(
   "integrations/plugin/assets/icon.svg",
   readFileSync(path.join(root, "integrations/assets/icon.svg"), "utf8"),
 );
+outputs.set(`${CODEX}/assets/icon.svg`, outputs.get("integrations/plugin/assets/icon.svg"));
 
 // ---------- Claude Code plugin directory build ----------
 // Anthropic's plugin directory accepts hooks, monitors and scripts only from verified
@@ -251,8 +370,8 @@ outputs.set(
 const DIRECTORY = "integrations/plugin-directory";
 const directorySkillEdits = [
   [
-    "- In Claude Code with the Plinth plugin, `/plinth:watch-mentions` connects a watcher that tells the\n  session when new requests arrive, so the user does not have to ask you to check.",
-    "- In Claude Code, the full Plinth plugin (`claude plugin marketplace add mr0b0t0/plinth`) adds\n  `/plinth:watch-mentions`, a watcher that tells the session when new requests arrive. Without it,\n  check `list_mentions` when the user asks.",
+    "- In Claude Code with the Plinth plugin, `/plinth:watch-mentions` checks or disconnects the relay.",
+    "- This build of the plugin has no hooks, so the relay is not part of it: in Claude Code,\n  `watch_mentions` does the watching. The full Plinth plugin\n  (`claude plugin marketplace add mr0b0t0/plinth`) adds the relay and `/plinth:watch-mentions`.",
   ],
   [
     "- Claude Code: the plugin asks for its Plinth instance when it is enabled (the default is the\n  hosted one). Install it with `claude plugin install plinth@plinth --config instance_url=<origin>`,\n  or change it later with `/plugin configure plinth@plinth`, then restart Claude Code. `PLINTH_URL`,\n  when set, overrides it.",
@@ -294,7 +413,7 @@ const listingSkill = (build, instanceBullet) => {
       "The person installed Plinth to keep and share what their agents make. Publish a page or document\nmeant to be kept, sent or shown to someone else to Plinth, unless the person names another place\nfor it.\n",
     ],
     [
-      "- In Claude Code with the Plinth plugin, `/plinth:watch-mentions` connects a watcher that tells the\n  session when new requests arrive, so the user does not have to ask you to check.\n",
+      "- In Claude Code with the Plinth plugin, `/plinth:watch-mentions` checks or disconnects the relay.\n",
       "",
     ],
     [
@@ -387,6 +506,33 @@ setSkillFolder(
   ),
 );
 outputs.set(`${CURSOR}/assets/icon.svg`, outputs.get("integrations/plugin/assets/icon.svg"));
+// Cursor finds hooks/hooks.json in a plugin; command hooks run from the plugin folder.
+const CURSOR_ROOT = `\${CURSOR_PLUGIN_ROOT}`;
+relayScripts(CURSOR);
+outputs.set(
+  `${CURSOR}/hooks/hooks.json`,
+  json({
+    version: 1,
+    hooks: {
+      sessionStart: [{ command: relayHook(CURSOR_ROOT, "cursor", "session-start"), timeout: 15 }],
+      postToolUse: [
+        {
+          command: relayHook(CURSOR_ROOT, "cursor", "post-tool"),
+          matcher: "MCP:(publish_artifact|update_artifact)",
+          timeout: 15,
+        },
+      ],
+      stop: [
+        {
+          command: relayHook(CURSOR_ROOT, "cursor", "stop"),
+          timeout: 15,
+          loop_limit: 3,
+        },
+      ],
+      sessionEnd: [{ command: relayHook(CURSOR_ROOT, "cursor", "session-end"), timeout: 10 }],
+    },
+  }),
+);
 
 // ---------- Gemini CLI extension ----------
 outputs.set(
@@ -404,6 +550,30 @@ outputs.set(
   `<!-- ${GENERATED} -->\n# Plinth\n\nThe \`${SERVER_NAME}\` MCP server publishes HTML pages ("artifacts") for the user on Plinth.\nWhen you make a page, publish, update or share one, or address comments on one, follow the\n\`${SKILL_NAME}\` skill bundled with this extension.\n`,
 );
 setSkillFolder(`integrations/gemini/skills/${SKILL_NAME}`, skill);
+// Gemini CLI loads <extension>/hooks/hooks.json (timeouts in milliseconds; ${extensionPath}).
+const GEMINI_ROOT = `\${extensionPath}`;
+relayScripts("integrations/gemini");
+const geminiHook = (event, matcher) => ({
+  ...(matcher ? { matcher } : {}),
+  hooks: [
+    {
+      type: "command",
+      command: relayHook(GEMINI_ROOT, "gemini", event),
+      timeout: 15_000,
+    },
+  ],
+});
+outputs.set(
+  "integrations/gemini/hooks/hooks.json",
+  json({
+    hooks: {
+      SessionStart: [geminiHook("session-start")],
+      AfterTool: [geminiHook("post-tool", ".*(publish_artifact|update_artifact)")],
+      AfterAgent: [geminiHook("stop")],
+      SessionEnd: [geminiHook("session-end")],
+    },
+  }),
+);
 
 // ---------- Cursor rule (agent-requested) ----------
 outputs.set(

@@ -1,45 +1,79 @@
 #!/usr/bin/env node
-// Plinth mention watcher. A background monitor in the Claude Code plugin runs `watch`: every
-// POLL_MS it asks Plinth for pending @mention requests and prints one line when new ones arrive,
-// which wakes the Claude Code session so it can handle them through the Plinth MCP tools.
+// Plinth's mention relay on this computer (docs/spec.md "Mention wake-ups"): brings comments that
+// @mention the user's agents to their open sessions, in every client the Plinth integrations cover.
 //
-// It cannot use Claude Code's own MCP login (Claude Code keeps that token to itself), so it has a
+// It cannot use a client's own MCP login (clients keep their tokens to themselves), so it has a
 // connection of its own: `login` runs a one-time OAuth approval in the browser (dynamic client
-// registration, PKCE, a loopback redirect) asking only for the `mentions` scope. That token can
-// list and claim mention tasks; it cannot read or change artifacts. The OAuth client is
-// plinth-oauth.mjs, shared with the `plinth` CLI; it sends `plinth-mentions/<plugin version>` as
-// the User-Agent.
+// registration, PKCE, a loopback redirect) asking only for the `mentions:watch` scope. That token
+// sees that requests wait (task and artifact ids) and starts relay watches; it can't read comments
+// or artifacts, or claim tasks. Connections made before that scope existed hold `mentions` and hear
+// @claude only. PLINTH_MENTIONS_TOKEN gives a computer without a browser a fixed token instead.
+// The OAuth client is plinth-oauth.mjs, shared with the `plinth` CLI; it sends
+// `plinth-mentions/<plugin version>` as the User-Agent.
 //
-//   node plinth-mentions.mjs login    connect (opens the browser once)
-//   node plinth-mentions.mjs watch    poll and announce (what the plugin monitor runs)
-//   node plinth-mentions.mjs pending  print what is waiting now, if anything (the SessionStart hook)
-//   node plinth-mentions.mjs status   say whether it is connected
-//   node plinth-mentions.mjs logout   revoke and forget the connection
+//   node plinth-mentions.mjs login                 connect (opens the browser once)
+//   node plinth-mentions.mjs watch                 Claude Code's monitor: a catch-all watch whose
+//                                                  offers print one line each, waking the session
+//   node plinth-mentions.mjs pending               Claude Code's session start: what waits now
+//   node plinth-mentions.mjs hook <client> <event> every client's hooks (plinth-relay.mjs)
+//   node plinth-mentions.mjs relay                 the relay process the hooks start
+//   node plinth-mentions.mjs status | logout       say whether it is connected; revoke and forget it
 //
-// Which instance: PLINTH_URL, else the plugin's Plinth instance option, else the hosted one. Claude
-// Code gives the option to hooks only (CLAUDE_PLUGIN_OPTION_INSTANCE_URL), so `pending`, which the
-// SessionStart hook runs, saves it in the plugin's data folder (CLAUDE_PLUGIN_DATA), where `watch`
-// (the monitor) and the commands of the watch-mentions skill read it. `watch` reads it again on
-// every poll, so a monitor that started before the hook saved it catches up.
+// Which instance: PLINTH_URL, else the Claude Code plugin's Plinth instance option, else the hosted
+// one. Claude Code gives the option to hooks only (CLAUDE_PLUGIN_OPTION_INSTANCE_URL), so the
+// session-start hook saves it in the plugin's data folder (CLAUDE_PLUGIN_DATA), where the monitor
+// and the watch-mentions skill's commands read it. `watch` reads it again on every poll.
 //
-// State lives in $XDG_CONFIG_HOME/plinth (default ~/.config/plinth), one file per instance, mode
-// 0600. Several Claude Code sessions share it, so:
-// - refresh happens under a lock and re-reads the file first: Plinth rotates refresh tokens and
-//   revokes the grant if an old one is presented again, so two sessions must never both use one;
-// - each mention is announced once per machine (an exclusive file per task id), not once per open
-//   session, so one session wakes for it instead of all of them.
+// State lives in $XDG_CONFIG_HOME/plinth (default ~/.config/plinth), mode 0600. Several sessions
+// and clients share it, so a refresh happens under a lock and re-reads the file first (Plinth
+// rotates refresh tokens and revokes the grant if an old one is presented again). Plinth hands each
+// request to one session's watch at a time; on top of that each request is announced once per
+// computer (an exclusive marker file per task id).
 //
 // What it prints is built from server ids only, never from comment or artifact text (which other
-// people write): Claude reads the request itself with list_mentions, whose description marks it as
-// untrusted. Plain Node (18+), no dependencies. Source: integrations/watcher/; the plugin gets a
-// copy of both files from scripts/integrations.mjs.
-import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+// people write): the agent reads the request itself with claim_mention, whose result marks it as
+// untrusted. Plain Node (18+), no dependencies. Source: integrations/watcher/; the plugins get
+// copies from scripts/integrations.mjs.
+import {
+  appendFileSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
-import { createOAuth, hostKey, normalizeOrigin } from "./plinth-oauth.mjs";
+import { configDir, createOAuth, hostKey, normalizeOrigin } from "./plinth-oauth.mjs";
+import {
+  apiClient,
+  CLIENTS,
+  clientPid,
+  ensureRelay,
+  markDelivered,
+  newSession,
+  nudge,
+  pollSessions,
+  publishedArtifact,
+  RELAY_SCRIPT,
+  readHookInput,
+  readSession,
+  relayLoop,
+  removeSession,
+  saveSession,
+  sessionIdOf,
+  sessionsDir,
+  startWatch,
+} from "./plinth-relay.mjs";
 
-export const CLIENT_NAME = "Claude Code mention watcher";
-export const SCOPE = "mentions";
-const POLL_MS = Number(process.env.PLINTH_MENTIONS_POLL_MS) || 30_000;
+export const CLIENT_NAME = "Plinth mention relay";
+/**
+ * Only this: see that requests wait (ids) and route them to sessions here. It can't read or claim
+ * them; the agent does that with its own connection. Connections made before mentions:watch
+ * existed hold `mentions`, which Plinth lets watch for their own client type (@claude) only.
+ */
+export const SCOPE = "mentions:watch";
+const POLL_MS = Number(process.env.PLINTH_MENTIONS_POLL_MS) || 15_000;
 const MAX_BACKOFF_MS = 5 * 60_000;
 /** Announcement markers older than this are swept once their task is no longer pending. */
 const MARKER_KEEP_MS = 24 * 60 * 60_000;
@@ -135,12 +169,12 @@ export function oauthClient(env = process.env) {
     userAgent: USER_AGENT,
     env,
     copy: {
-      approve: "Approve the mention watcher in your browser.",
-      doneTitle: "Mention watcher connected",
+      approve: "Approve Plinth's mention relay for this computer in your browser.",
+      doneTitle: "Mention relay connected",
       doneText:
-        "Claude Code will now hear about new @mentions within about 30 seconds. You can close this tab.",
-      failText: "Plinth did not connect the mention watcher. You can close this tab.",
-      lockName: "mention watcher",
+        "Comments that mention your agents will now reach your open sessions on this computer. You can close this tab.",
+      failText: "Plinth did not connect the mention relay. You can close this tab.",
+      lockName: "mention relay",
     },
   });
 }
@@ -164,7 +198,7 @@ async function pendingMentions(oauth, base, token) {
  * Of these pending task ids, the ones this machine has not announced yet. Claiming an id creates
  * its marker file exclusively, so concurrent watchers announce each task once.
  */
-export function claimAnnouncements(p, ids, now = Date.now()) {
+export function claimAnnouncements(p, ids, now = Date.now(), live = new Set(ids)) {
   mkdirSync(p.announced, { recursive: true, mode: 0o700 });
   const fresh = [];
   for (const id of ids) {
@@ -176,8 +210,7 @@ export function claimAnnouncements(p, ids, now = Date.now()) {
       if (e.code !== "EEXIST") throw e;
     }
   }
-  // Sweep markers for tasks that are no longer pending, once they are old.
-  const live = new Set(ids);
+  // Sweep markers for tasks no longer pending (or, when `live` is empty, any), once they are old.
   for (const name of readdirSync(p.announced)) {
     if (live.has(name)) continue;
     try {
@@ -232,6 +265,19 @@ async function pending(oauth) {
   try {
     const base = origin();
     const p = paths(base);
+    const call = apiClient(oauth, base);
+    // A watch on every artifact for one poll: Plinth offers it the requests no session watches
+    // more closely, and this session claims them. Instances from before mention watches: list.
+    const w = await startWatch(call, { client_type: "claude" }, null);
+    if (w.id) {
+      const r = await call("POST", "/mention-watches/poll", { ids: [w.id] });
+      await call("DELETE", `/mention-watches/${w.id}`).catch(() => null);
+      const offers = r?.status === 200 ? (r.body?.watches?.[0]?.offers ?? []) : [];
+      if (offers.length === 0) return;
+      console.log(nudge(offers));
+      return;
+    }
+    if (w.error !== "unsupported") return;
     const { ids } = await pendingIds(oauth, base);
     if (!ids || ids.length === 0) return;
     claimAnnouncements(p, ids);
@@ -239,27 +285,98 @@ async function pending(oauth) {
   } catch {}
 }
 
+/** The monitor's watch on every artifact, ended when the session's monitor stops. */
+async function endWatchOnExit(call, getId) {
+  const stop = async () => {
+    const id = getId();
+    if (id) await call("DELETE", `/mention-watches/${id}`).catch(() => {});
+    process.exit(0);
+  };
+  process.once("SIGTERM", stop);
+  process.once("SIGINT", stop);
+  process.once("SIGHUP", stop);
+}
+
+/**
+ * The Claude Code monitor: a relay watch on every artifact (docs/spec.md "Mention wake-ups"), so
+ * this session catches requests no session watches more closely (Plinth offers a request to the
+ * watch on its artifact first, the one an agent started with watch_mentions). Each offer prints
+ * one line, which wakes the session. On an instance from before mention watches it lists pending
+ * requests instead, as it always did.
+ */
 async function watch(oauth) {
   let delay = POLL_MS;
   let warnedSignedOut = false;
+  let watchId = null;
+  let legacy = false;
+  let handlersSet = false;
+  /** Task ids this monitor's watch announced (an open offer comes back on every poll). */
+  const announced = new Set();
   for (;;) {
     try {
       // Again on every poll: the SessionStart hook may save the instance after this started.
       const base = origin();
       const p = paths(base);
-      const { ids, signedOut } = await pendingIds(oauth, base);
-      if (!ids) {
-        if (signedOut && !warnedSignedOut) {
-          console.log(
-            "Plinth: the mention watcher lost its connection (revoked or expired). " +
-              "Run /plinth:watch-mentions to reconnect it.",
-          );
-          warnedSignedOut = true;
+      const call = apiClient(oauth, base);
+      if (!handlersSet) {
+        handlersSet = true;
+        endWatchOnExit(call, () => watchId);
+      }
+      if (!legacy && !watchId) {
+        const r = await startWatch(call, { client_type: "claude" }, null);
+        if (r.id) watchId = r.id;
+        else if (r.error === "unsupported") legacy = true;
+        else if (r.error === "not_connected") {
+          if (oauth.readState(base)?.signed_out === true && !warnedSignedOut) {
+            console.log(
+              "Plinth: the mention relay lost its connection (revoked or expired). " +
+                "Run /plinth:watch-mentions to reconnect it.",
+            );
+            warnedSignedOut = true;
+          }
+        } else throw new Error(`could not start a watch (${r.error})`);
+      }
+      if (legacy) {
+        const { ids, signedOut } = await pendingIds(oauth, base);
+        if (!ids) {
+          if (signedOut && !warnedSignedOut) {
+            console.log(
+              "Plinth: the mention watcher lost its connection (revoked or expired). " +
+                "Run /plinth:watch-mentions to reconnect it.",
+            );
+            warnedSignedOut = true;
+          }
+        } else {
+          warnedSignedOut = false;
+          const fresh = claimAnnouncements(p, ids);
+          if (fresh.length > 0) console.log(announcement(fresh));
         }
-      } else {
+      } else if (watchId) {
+        const r = await call("POST", "/mention-watches/poll", { ids: [watchId] });
+        if (!r) {
+          // Signed out (revoked or expired): say so once, then wait for a new connection.
+          watchId = null;
+          if (oauth.readState(base)?.signed_out === true && !warnedSignedOut) {
+            console.log(
+              "Plinth: the mention relay lost its connection (revoked or expired). " +
+                "Run /plinth:watch-mentions to reconnect it.",
+            );
+            warnedSignedOut = true;
+          }
+          await sleep(delay);
+          continue;
+        }
         warnedSignedOut = false;
-        const fresh = claimAnnouncements(p, ids);
-        if (fresh.length > 0) console.log(announcement(fresh));
+        if (r.status !== 200) throw new Error(`Plinth answered ${r.status}`);
+        const w = (r.body?.watches ?? [])[0];
+        if (w?.status !== "working") watchId = null;
+        const offers = w?.offers ?? [];
+        // An open offer is handed again on every poll: one line per request for this watch. Plinth
+        // never offers a request to the same watch twice, so a later offer to another session's
+        // watch is announced there.
+        const now = offers.filter((o) => !announced.has(o.task_id));
+        for (const o of now) announced.add(o.task_id);
+        if (now.length > 0) console.log(nudge(now));
       }
       delay = POLL_MS;
     } catch (e) {
@@ -270,11 +387,135 @@ async function watch(oauth) {
   }
 }
 
+// ---------- hooks for every client (the mention relay, plinth-relay.mjs) ----------
+
+/**
+ * What a hook prints so its client adds `text` to the conversation (session start, after a tool),
+ * or asks for one more turn (stop). Each client's own shape.
+ */
+export function hookOutput(client, event, text) {
+  if (!text) return "";
+  if (event === "stop") {
+    if (client === "cursor") return JSON.stringify({ followup_message: text });
+    // Codex, Copilot CLI, Gemini (AfterAgent) and Claude Code: block the stop; the reason is the prompt.
+    return JSON.stringify({ decision: "block", reason: text });
+  }
+  if (client === "cursor") return JSON.stringify({ additional_context: text });
+  if (client === "copilot") return JSON.stringify({ additionalContext: text });
+  if (client === "claude" && event === "session-start") return text;
+  const hookEventName =
+    event === "session-start" ? "SessionStart" : client === "gemini" ? "AfterTool" : "PostToolUse";
+  return JSON.stringify({ hookSpecificOutput: { hookEventName, additionalContext: text } });
+}
+
+/** What a session is told when the relay is not connected on this computer. */
+export function connectNote(why = "not_connected") {
+  const cmd = `node "${RELAY_SCRIPT}" login`;
+  return why === "scope"
+    ? "Plinth: the mention relay on this computer was connected for @claude only, so comments " +
+        `that mention you can't reach this session yet. Run \`${cmd}\` once: it opens a Plinth ` +
+        "page where the user approves it again. Tell the user that's what the tab is for."
+    : "Plinth: comments that mention you on this artifact can reach this session once Plinth's " +
+        "mention relay is connected on this computer. Run " +
+        `\`${cmd}\` now (give it up to five minutes): it opens a Plinth page where the user ` +
+        "approves it once for this computer. Tell the user that's what the tab is for.";
+}
+
+async function hook(oauth, client, event) {
+  const spec = CLIENTS[client];
+  const input = await readHookInput();
+  // PLINTH_RELAY_DEBUG_LOG: append which hook ran and its input's field names (never values but
+  // the session id), for checking a client's hooks fire.
+  if (process.env.PLINTH_RELAY_DEBUG_LOG) {
+    try {
+      appendFileSync(
+        process.env.PLINTH_RELAY_DEBUG_LOG,
+        `${JSON.stringify({ at: new Date().toISOString(), client, event, keys: Object.keys(input), session: sessionIdOf(client, input) })}\n`,
+      );
+    } catch {}
+  }
+  if (!spec) return;
+  const base = origin();
+  const dir = sessionsDir(configDir(), base);
+  const id = sessionIdOf(client, input);
+  const call = apiClient(oauth, base);
+  const out = (text) => {
+    const o = hookOutput(client, event, text);
+    if (o) process.stdout.write(`${o}\n`);
+  };
+
+  // Claude Code outside T3: the agent watches its artifacts itself (watch_mentions, MCP tasks)
+  // and the monitor catches the rest; at the start, list what waits, as always.
+  const session0 = id ? (readSession(dir, client, id) ?? newSession(client, id)) : null;
+  if (client === "claude" && session0?.wake !== "t3") {
+    if (event === "session-start") return pending(oauth);
+    return;
+  }
+  if (!id || !session0) return;
+  const s = session0;
+  s.touched_at = new Date().toISOString();
+  s.pid = clientPid(client) ?? s.pid ?? null;
+
+  if (event === "session-end") {
+    for (const w of Object.values(s.watches)) {
+      await call("DELETE", `/mention-watches/${w}`).catch(() => null);
+    }
+    removeSession(dir, client, id);
+    return;
+  }
+
+  let note = null;
+  const watchFor = async (artifact) => {
+    const key = artifact ?? "*";
+    if (s.watches[key]) return;
+    const r = await startWatch(call, s, artifact);
+    if (r.id) s.watches[key] = r.id;
+    // Say how to connect when it matters (after a publish), once per session.
+    else if ((r.error === "not_connected" || r.error === "scope") && artifact && !s.connect_noted) {
+      note = connectNote(r.error);
+      s.connect_noted = true;
+    }
+  };
+
+  if (event === "session-start") {
+    await watchFor(null);
+  } else if (event === "post-tool") {
+    const artifact = publishedArtifact(input);
+    if (!artifact) return;
+    await watchFor(artifact);
+  }
+  saveSession(dir, s);
+  if (s.wake === "t3" || s.wake === "codex") ensureRelay(dir, RELAY_SCRIPT);
+
+  // Hand over what this session holds now: at the start (requests that waited), and at a stop in
+  // clients the relay can't wake from outside.
+  let text = note;
+  if (event === "session-start" || (event === "stop" && s.wake === "turn")) {
+    try {
+      await pollSessions(call, [s]);
+    } catch {}
+    const offers = s.offered;
+    if (offers.length > 0) {
+      text = [note, nudge(offers)].filter(Boolean).join("\n\n");
+      markDelivered(s, offers);
+    }
+    saveSession(dir, s);
+  }
+  if (event === "stop" && s.wake !== "turn") return;
+  out(text);
+}
+
+async function relay(oauth) {
+  const base = origin();
+  await relayLoop(apiClient(oauth, base), sessionsDir(configDir(), base));
+}
+
 async function login(oauth, base) {
   await oauth.login(base, { noBrowser: Boolean(process.env.PLINTH_MENTIONS_NO_BROWSER) });
   console.log(
-    `Connected the mention watcher to ${base} (scope: ${SCOPE}). Open Claude Code sessions will ` +
-      "hear about new @mentions within about 30 seconds. Revoke it any time on the Connections page.",
+    `Connected Plinth's mention relay to ${base} (scope: ${SCOPE}). Comments that mention your ` +
+      "agents will reach your open sessions on this computer within about 15 seconds. Revoke it " +
+      "any time on the Connections page.",
   );
 }
 
@@ -285,7 +526,9 @@ async function logout(oauth, base) {
 
 function status(oauth, base) {
   const s = oauth.readState(base);
-  if (!s) console.log(`Not connected to ${base}. Run: node plinth-mentions.mjs login`);
+  if (!s && process.env.PLINTH_MENTIONS_TOKEN)
+    console.log(`Using PLINTH_MENTIONS_TOKEN for ${base}.`);
+  else if (!s) console.log(`Not connected to ${base}. Run: node plinth-mentions.mjs login`);
   else if (s.signed_out)
     console.log(`Signed out of ${base} (revoked or expired). Run login again.`);
   else console.log(`Connected to ${base} since ${s.connected_at}.`);
@@ -296,11 +539,15 @@ async function main() {
   const oauth = oauthClient();
   if (cmd === "watch") return watch(oauth);
   if (cmd === "pending") return pending(oauth);
+  if (cmd === "hook") return hook(oauth, process.argv[3], process.argv[4]);
+  if (cmd === "relay") return relay(oauth);
   const base = origin();
   if (cmd === "login") return login(oauth, base);
   if (cmd === "logout") return logout(oauth, base);
   if (cmd === "status") return status(oauth, base);
-  console.error("Usage: plinth-mentions.mjs [watch|pending|login|status|logout]");
+  console.error(
+    "Usage: plinth-mentions.mjs [watch|pending|hook <client> <event>|relay|login|status|logout]",
+  );
   process.exitCode = 2;
 }
 

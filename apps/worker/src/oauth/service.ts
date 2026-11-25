@@ -3,6 +3,7 @@
 // revocation (RFC 7009). Codes and tokens are random and stored only as SHA-256 hashes.
 import {
   type ClientType,
+  DEFAULT_SCOPES,
   type OAuthConsentResult,
   type OAuthRequestInfo,
   SCOPES,
@@ -62,7 +63,9 @@ export function authorizationServerMetadata(config: Config) {
     token_endpoint: `${o}/oauth/token`,
     registration_endpoint: `${o}/oauth/register`,
     revocation_endpoint: `${o}/oauth/revoke`,
-    scopes_supported: [...SCOPES],
+    // What agents ask for. mentions:watch (the mention relay) is left out so a client that asks
+    // for every listed scope does not get it; the relay asks for it by name.
+    scopes_supported: [...DEFAULT_SCOPES],
     response_types_supported: ["code"],
     response_modes_supported: ["query"],
     grant_types_supported: [...GRANT_TYPES],
@@ -163,7 +166,7 @@ export async function registerClient(db: Db, raw: unknown) {
     token_endpoint_auth_method: "none",
     grant_types: [...GRANT_TYPES],
     response_types: ["code"],
-    scope: SCOPES.join(" "),
+    scope: DEFAULT_SCOPES.join(" "),
   };
 }
 
@@ -185,7 +188,7 @@ export function parseRequestedScope(scope: string | null): Scope[] {
   const asked = (scope ?? "").split(" ").filter(Boolean);
   // Refresh tokens are always issued; tolerate clients that ask for them by scope.
   const wanted = asked.filter((s) => s !== "offline_access");
-  if (wanted.length === 0) return [...SCOPES];
+  if (wanted.length === 0) return [...DEFAULT_SCOPES];
   const out: Scope[] = [];
   for (const s of wanted) {
     if (!(SCOPES as readonly string[]).includes(s)) {

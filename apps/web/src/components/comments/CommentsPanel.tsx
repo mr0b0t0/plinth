@@ -39,7 +39,7 @@ import { Composer } from "./Composer.tsx";
 import "./comments.css";
 import { buildThreads, type CommentFilter, filterThreads, highlightAnchors } from "./model.ts";
 import { PinLayer } from "./PinLayer.tsx";
-import { Thread } from "./Thread.tsx";
+import { mentionStateLabel, Thread } from "./Thread.tsx";
 import type { PageCompose, PageComposeResult } from "./usePageComments.ts";
 
 /** A renderer's place to pin the composer to (viewer/frameComment.ts); `n` changes every time. */
@@ -540,7 +540,9 @@ export function CommentsPanel({
   };
 
   const mentionSummary = (c: CommentInfo) =>
-    c.mentions.length > 0 ? ` ${c.mentions.map((m) => `${m.target} ${m.state}`).join(", ")}.` : "";
+    c.mentions.length > 0
+      ? ` ${c.mentions.map((m) => `${m.target} ${mentionStateLabel(m)}`).join(", ")}.`
+      : "";
 
   const submit = async () => {
     const body = draft.trim();

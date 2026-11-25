@@ -7,6 +7,7 @@ import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
 import { LIMITS, PRODUCT_NAME } from "@plinth/shared";
 import { PLINTH_VERSION } from "../app/version.ts";
 import type { Ctx } from "../services/context.ts";
+import { registerEventMethods } from "./events.ts";
 import {
   BOUND_TOKEN_NOTE,
   CATEGORY_INSTRUCTION,
@@ -19,6 +20,7 @@ import {
   UNTRUSTED_FILES_NOTE,
 } from "./notes.ts";
 import { PREVIEW_TOOL_META, previewSupported } from "./preview.ts";
+import { registerTaskMethods } from "./tasks.ts";
 import { registerArtifactTools } from "./tools/artifacts.ts";
 import { registerCommentTools } from "./tools/comments.ts";
 import type { ToolRegistrar } from "./tools/context.ts";
@@ -28,6 +30,7 @@ import { registerPreviewTools } from "./tools/preview.ts";
 import { registerSheetTools } from "./tools/sheets.ts";
 import { registerStatsTools } from "./tools/stats.ts";
 import { registerUploadTools } from "./tools/uploads.ts";
+import { registerWatchTools } from "./tools/watch.ts";
 
 export * from "./catalog.ts";
 export * from "./notes.ts";
@@ -39,6 +42,7 @@ export * from "./notes.ts";
 export const MCP_TOOL_FILES: readonly ToolRegistrar[] = [
   registerArtifactTools,
   registerCommentTools,
+  registerWatchTools,
   registerUploadTools,
   registerStatsTools,
   registerDataTools,
@@ -75,11 +79,17 @@ export function buildMcpServer(ctx: Ctx): McpServer {
         `${SENSITIVE_INSTRUCTION} ` +
         "For feedback, read threads with list_comments, answer with reply_comment and close " +
         "them with resolve_comment; requests addressed to you arrive through list_mentions and " +
-        `claim_mention. ${BOUND_TOKEN_NOTE} ${UNTRUSTED_FILES_NOTE} ${TYPES_NOTE} ${PLUGIN_NOTE}`,
+        "claim_mention. When a publish or update result has watch_mentions, call watch_mentions with " +
+        "that artifact_id so comments that mention you reach this session. " +
+        `${BOUND_TOKEN_NOTE} ${UNTRUSTED_FILES_NOTE} ${TYPES_NOTE} ${PLUGIN_NOTE}`,
     },
   );
 
   for (const register of MCP_TOOL_FILES) register({ server, ctx, opaque, preview });
+  // watch_mentions answers with an MCP task where the client supports them (mcp/tasks.ts).
+  registerTaskMethods(server, ctx);
+  // mention.created as an MCP event (mcp/events.ts), for clients such as ChatGPT.
+  registerEventMethods(server, ctx);
 
   return server;
 }

@@ -11,6 +11,7 @@ import {
   DESIGN_EXPORT,
   LIMITS,
   MENTION_STATES,
+  MENTION_WATCH,
   REPORT_STATES,
   ROLES,
   SCOPES,
@@ -590,6 +591,26 @@ export const listMentionsInput = z.object({
 });
 
 export const claimMentionInput = z.object({ task_id: z.string().min(1).max(64) });
+
+/** watch_mentions: bring requests on one artifact to this session (docs/spec.md "Mention wake-ups"). */
+export const watchMentionsInput = z.object({
+  artifact_id: artifactRefSchema.describe(
+    "The artifact to watch: the id publish_artifact or update_artifact returned",
+  ),
+});
+
+/** POST /api/v1/mention-watches: a session on the user's computer starts listening (the relay). */
+export const createMentionWatchInput = z.object({
+  /** The artifact this session published, or null for every artifact of the user. */
+  artifact_id: artifactRefSchema.nullable().default(null),
+  /** Whose mentions it hears: the harness the session runs in. */
+  client_type: clientTypeSchema,
+});
+
+/** POST /api/v1/mention-watches/poll: the relay asks about its watches in one request. */
+export const pollMentionWatchesInput = z.object({
+  ids: z.array(z.string().min(1).max(64)).min(1).max(MENTION_WATCH.maxPollIds),
+});
 
 export const listCommentsInput = z.object({ id: artifactRefSchema });
 

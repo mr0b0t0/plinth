@@ -1,0 +1,40 @@
+{
+  "description": "Plinth's mention relay: bring comments that mention this agent to the Codex session that published the artifact",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v node >/dev/null 2>&1 && node \"$PLUGIN_ROOT/scripts/plinth-mentions.mjs\" hook codex session-start 2>/dev/null; exit 0",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "mcp__.*__(publish_artifact|update_artifact)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v node >/dev/null 2>&1 && node \"$PLUGIN_ROOT/scripts/plinth-mentions.mjs\" hook codex post-tool 2>/dev/null; exit 0",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v node >/dev/null 2>&1 && node \"$PLUGIN_ROOT/scripts/plinth-mentions.mjs\" hook codex session-end 2>/dev/null; exit 0",
+            "timeout": 3
+          }
+        ]
+      }
+    ]
+  }
+}

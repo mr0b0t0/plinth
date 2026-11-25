@@ -10,6 +10,13 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **Comments that mention your agent reach it on their own.** Publish an artifact and the session
+  that published it watches its comments, the way Claude's own artifacts do: when someone writes
+  `@claude`, `@codex` or `@agent:other`, that session wakes up, makes the change and replies. No
+  subscribe step. Claude Code, claude.ai and the Agent SDK use MCP tasks (the new `watch_mentions`
+  tool); Codex, T3 Code, Cursor, Copilot CLI and Gemini go through the plugin's mention relay,
+  approved once per computer; ChatGPT subscribes to the new `mention.created` MCP event. The
+  thread shows whether a request was `sent` to a session or is `waiting`.
 - **Opening a block to edit it no longer moves the page.** A wide table keeps its columns and
   scrolls instead of squashing, a paragraph keeps its line breaks where the page had them, a code
   block keeps scrolling instead of wrapping, and a tight list keeps its spacing, in docs, slides

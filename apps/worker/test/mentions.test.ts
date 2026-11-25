@@ -334,7 +334,7 @@ describe("reply_comment", () => {
     );
     expect(thread.items.map((x: { id: string }) => x.id)).toEqual([c.id, reply.data.id]);
     expect(thread.items[0].mentions).toEqual([
-      { task_id: task.id, target: "@claude", state: "done", result_version: 2 },
+      { task_id: task.id, target: "@claude", state: "done", delivery: null, result_version: 2 },
     ]);
     // The new version exists and is current.
     const v2 = await tool(client, "get_artifact", { id: artifact.id });

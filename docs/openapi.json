@@ -1600,6 +1600,101 @@
         "x-mcp-tool": "claim_mention"
       }
     },
+    "/mention-watches": {
+      "post": {
+        "operationId": "createMentionWatch",
+        "summary": "Start a mention watch for a session on this computer (the mention relay)",
+        "description": "A relay watch: the session is offered the pending mentions it hears, ids only, through pollMentionWatches. `mentions:watch` hears any client_type; `mentions` only the connection's own. A watch nobody polls for 15 minutes ends. Agents with MCP tasks use the watch_mentions tool instead.",
+        "tags": ["Comments"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/CreateMentionWatchInput" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Success",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/MentionWatchInfo" } }
+            }
+          },
+          "400": { "$ref": "#/components/responses/E400" },
+          "401": { "$ref": "#/components/responses/E401" },
+          "403": { "$ref": "#/components/responses/E403" },
+          "404": { "$ref": "#/components/responses/E404" },
+          "429": { "$ref": "#/components/responses/E429" },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [
+          { "bearerAuth": ["mentions:watch"] },
+          { "sessionCookie": [], "csrfHeader": [] }
+        ]
+      }
+    },
+    "/mention-watches/poll": {
+      "post": {
+        "operationId": "pollMentionWatches",
+        "summary": "Each relay watch's status and the mentions it was just handed",
+        "tags": ["Comments"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/PollMentionWatchesInput" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/MentionWatchPolls" } }
+            }
+          },
+          "400": { "$ref": "#/components/responses/E400" },
+          "401": { "$ref": "#/components/responses/E401" },
+          "429": { "$ref": "#/components/responses/E429" },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [
+          { "bearerAuth": ["mentions:watch"] },
+          { "sessionCookie": [], "csrfHeader": [] }
+        ]
+      }
+    },
+    "/mention-watches/{id}": {
+      "delete": {
+        "operationId": "deleteMentionWatch",
+        "summary": "End a mention watch",
+        "tags": ["Comments"],
+        "parameters": [
+          {
+            "in": "path",
+            "required": true,
+            "name": "id",
+            "schema": { "type": "string", "minLength": 1, "maxLength": 200 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/MentionWatchInfo" } }
+            }
+          },
+          "401": { "$ref": "#/components/responses/E401" },
+          "404": { "$ref": "#/components/responses/E404" },
+          "default": { "$ref": "#/components/responses/Error" }
+        },
+        "security": [
+          { "bearerAuth": ["mentions:watch"] },
+          { "sessionCookie": [], "csrfHeader": [] }
+        ]
+      }
+    },
     "/comments/{id}/reply": {
       "post": {
         "operationId": "replyComment",
@@ -3104,7 +3199,10 @@
           "scopes": {
             "minItems": 1,
             "type": "array",
-            "items": { "type": "string", "enum": ["artifacts:read", "artifacts:write", "mentions"] }
+            "items": {
+              "type": "string",
+              "enum": ["artifacts:read", "artifacts:write", "mentions", "mentions:watch"]
+            }
           },
           "artifact": { "type": "string", "minLength": 1, "maxLength": 200 }
         },
@@ -5445,9 +5543,13 @@
                 "task_id": { "type": "string" },
                 "target": { "type": "string" },
                 "state": { "type": "string", "enum": ["pending", "claimed", "done", "failed"] },
+                "delivery": {
+                  "oneOf": [{ "type": "string", "enum": ["sent", "waiting"] }, { "type": "null" }],
+                  "description": "A pending task: \"sent\" while an agent session it woke has not claimed it, else \"waiting\". Null otherwise"
+                },
                 "result_version": { "type": ["integer", "null"] }
               },
-              "required": ["task_id", "target", "state", "result_version"]
+              "required": ["task_id", "target", "state", "delivery", "result_version"]
             }
           }
         },
@@ -5491,6 +5593,9 @@
           "comment_author": { "type": "string" },
           "anchor": { "oneOf": [{ "$ref": "#/components/schemas/Anchor" }, { "type": "null" }] },
           "version_number": { "type": "integer", "minimum": 1 },
+          "delivery": {
+            "oneOf": [{ "type": "string", "enum": ["sent", "waiting"] }, { "type": "null" }]
+          },
           "claimed_by": { "type": ["string", "null"] },
           "claimed_at": { "type": ["string", "null"], "format": "date-time" },
           "result_version": { "type": ["integer", "null"] },
@@ -5508,6 +5613,7 @@
           "comment_author",
           "anchor",
           "version_number",
+          "delivery",
           "claimed_by",
           "claimed_at",
           "result_version",
@@ -5521,6 +5627,90 @@
         },
         "required": ["items"]
       },
+      "CreateMentionWatchInput": {
+        "type": "object",
+        "properties": {
+          "artifact_id": {
+            "default": null,
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80,
+                "description": "Artifact id or slug"
+              },
+              { "type": "null" }
+            ]
+          },
+          "client_type": { "type": "string", "enum": ["claude", "codex", "other"] }
+        },
+        "required": ["client_type"]
+      },
+      "PollMentionWatchesInput": {
+        "type": "object",
+        "properties": {
+          "ids": {
+            "minItems": 1,
+            "maxItems": 100,
+            "type": "array",
+            "items": { "type": "string", "minLength": 1, "maxLength": 64 }
+          }
+        },
+        "required": ["ids"]
+      },
+      "MentionWatchInfo": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "kind": { "type": "string", "enum": ["task", "relay"] },
+          "artifact_id": { "type": ["string", "null"] },
+          "client_type": { "type": "string", "enum": ["claude", "codex", "other"] },
+          "status": { "type": "string", "enum": ["working", "completed", "cancelled", "expired"] },
+          "created_at": { "type": "string", "format": "date-time" },
+          "expires_at": { "type": "string", "format": "date-time" }
+        },
+        "required": [
+          "id",
+          "kind",
+          "artifact_id",
+          "client_type",
+          "status",
+          "created_at",
+          "expires_at"
+        ]
+      },
+      "MentionWatchPolls": {
+        "type": "object",
+        "properties": {
+          "watches": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": { "type": "string" },
+                "status": {
+                  "type": "string",
+                  "enum": ["working", "completed", "cancelled", "expired"]
+                },
+                "offers": {
+                  "type": "array",
+                  "description": "Mention tasks this watch was just handed (ids only). Read them through the agent's own connection",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "task_id": { "type": "string" },
+                      "artifact_id": { "type": "string" }
+                    },
+                    "required": ["task_id", "artifact_id"]
+                  }
+                }
+              },
+              "required": ["id", "status", "offers"]
+            }
+          }
+        },
+        "required": ["watches"]
+      },
       "ConnectionInfo": {
         "type": "object",
         "properties": {
@@ -5530,7 +5720,10 @@
           "kind": { "type": "string", "enum": ["token", "oauth"] },
           "scopes": {
             "type": "array",
-            "items": { "type": "string", "enum": ["artifacts:read", "artifacts:write", "mentions"] }
+            "items": {
+              "type": "string",
+              "enum": ["artifacts:read", "artifacts:write", "mentions", "mentions:watch"]
+            }
           },
           "created_at": { "type": "string", "format": "date-time" },
           "last_used_at": { "type": ["string", "null"], "format": "date-time" },
@@ -7620,7 +7813,7 @@
       "bearerAuth": {
         "type": "http",
         "scheme": "bearer",
-        "description": "Personal access token (`plinth_pat_...`, created on the Connections page) or an OAuth 2.1 access token (`plinth_at_...`) from /oauth/token. Scopes: artifacts:read, artifacts:write, mentions. In single-user mode with ADMIN_TOKEN set, that token also works."
+        "description": "Personal access token (`plinth_pat_...`, created on the Connections page) or an OAuth 2.1 access token (`plinth_at_...`) from /oauth/token. Scopes: artifacts:read, artifacts:write, mentions, mentions:watch. In single-user mode with ADMIN_TOKEN set, that token also works."
       },
       "uploadToken": {
         "type": "http",

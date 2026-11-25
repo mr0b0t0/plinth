@@ -20,12 +20,15 @@ import { applyAppHeaders } from "./app/headers.ts";
 import { notFoundText, serveSpa } from "./app/spa.ts";
 import { type Bindings, ConfigError, getConfig } from "./config.ts";
 import { contentRoot, resolveHost, serveContent } from "./content/serve.ts";
+import { getDb } from "./db/client.ts";
 import { ApiError } from "./lib/errors.ts";
 import { handleMcp } from "./mcp/server.ts";
 import { mcpResourceMetadataUrl, oauthRoutes } from "./oauth/routes.ts";
 import { pruneUploadTickets, sweepStagingAttempts } from "./services/attempts.ts";
 import { pruneInvitationMarks } from "./services/invitations.ts";
 import { liveRetentionDays, pruneLiveDrafts } from "./services/live.ts";
+import { deliverDue, sweepMentionEvents } from "./services/mentionEvents.ts";
+import { sweepMentionWatches } from "./services/mentionWatches.ts";
 import { foldOpens, viewRetentionDays } from "./services/views.ts";
 
 // The live-room Durable Object class (binding ROOMS, wrangler.jsonc); see src/rooms/.
@@ -167,7 +170,13 @@ const SCHEDULED_TASKS: readonly ((env: Bindings, at: number) => Promise<unknown>
   (env, at) => pruneLiveDrafts(env.DB, liveRetentionDays(env), at),
   // Invitation email counters (hashed addresses) older than two days.
   (env, at) => pruneInvitationMarks(env.DB, at),
+  // Mention watches past their expiry, and ended ones after a week; lapsed event subscriptions.
+  (env, at) => sweepMentionWatches({ db: getDb(env.DB) }, at),
+  (env, at) => sweepMentionEvents({ db: getDb(env.DB) }, at),
 ];
+
+/** The second cron trigger (wrangler.jsonc): every minute, event webhook retries only. */
+const MINUTE_CRON = "* * * * *";
 
 export default {
   async fetch(request: Request, env: Bindings, ctx: ExecutionContext): Promise<Response> {
@@ -208,7 +217,8 @@ export default {
   },
 
   /**
-   * The hourly cron trigger (wrangler.jsonc `triggers`): remove what abandoned upload attempts
+   * The minute cron trigger retries event webhooks (services/mentionEvents.ts). The hourly cron
+   * trigger (wrangler.jsonc `triggers`): remove what abandoned upload attempts
    * left, upload tickets past their status window (services/attempts.ts), and live doc drafts
    * nobody touched for LIVE_DRAFT_RETENTION_DAYS (services/live.ts), and invitation email counters
    * older than two days (services/invitations.ts). At 03 UTC, also fold opens older than
@@ -220,6 +230,17 @@ export default {
     env: Bindings,
     _ctx: ExecutionContext,
   ): Promise<void> {
+    if (controller.cron === MINUTE_CRON) {
+      // Event webhooks that failed and are due again (services/mentionEvents.ts).
+      let config: ReturnType<typeof getConfig>;
+      try {
+        config = getConfig(env as unknown as Record<string, unknown>);
+      } catch {
+        return;
+      }
+      await deliverDue({ db: getDb(env.DB), config }, controller.scheduledTime);
+      return;
+    }
     for (const task of SCHEDULED_TASKS) await task(env, controller.scheduledTime);
   },
 } satisfies ExportedHandler<Bindings>;

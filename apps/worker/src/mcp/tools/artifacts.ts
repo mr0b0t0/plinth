@@ -43,6 +43,7 @@ import {
   WHITEBOARD_PUBLISH_NOTE,
 } from "../notes.ts";
 import { run, type ToolRegistrar } from "./context.ts";
+import { withWatchHint } from "./watch.ts";
 
 export const registerArtifactTools: ToolRegistrar = ({ server, ctx, opaque, preview }) => {
   server.registerTool(
@@ -76,7 +77,7 @@ export const registerArtifactTools: ToolRegistrar = ({ server, ctx, opaque, prev
       inputSchema: publishArtifactInput,
       ...preview,
     },
-    (args) => run(() => publishArtifact(ctx, args)),
+    (args, extra) => run(async () => withWatchHint(ctx, extra, await publishArtifact(ctx, args))),
   );
 
   server.registerTool(
@@ -103,7 +104,7 @@ export const registerArtifactTools: ToolRegistrar = ({ server, ctx, opaque, prev
       inputSchema: updateArtifactInput,
       ...preview,
     },
-    (args) => run(() => updateArtifact(ctx, args)),
+    (args, extra) => run(async () => withWatchHint(ctx, extra, await updateArtifact(ctx, args))),
   );
 
   server.registerTool(

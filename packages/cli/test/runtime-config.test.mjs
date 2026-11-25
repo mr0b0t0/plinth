@@ -39,6 +39,8 @@ const workerDir = path.join(root, "apps", "worker");
 const repoCfg = parseJsonc(readFileSync(path.join(workerDir, "wrangler.jsonc"), "utf8"));
 const FLAG = "enable_request_signal";
 const CRON = "0 * * * *";
+/** The minute cron: event webhook retries (docs/spec.md "Mention wake-ups"). */
+const MINUTE_CRON = "* * * * *";
 
 const tmp = mkdtempSync(path.join(tmpdir(), "plinth-runtime-config-"));
 after(() => rmSync(tmp, { recursive: true, force: true }));
@@ -206,7 +208,7 @@ describe("generated Worker configs carry the flag and the cron", () => {
     assertRuntime(next, "refreshRuntime");
     assert.deepEqual(next.vars, old.vars);
     const own = refreshRuntime({ ...old, triggers: { crons: ["*/5 * * * *"] } }, repoCfg);
-    assert.deepEqual(own.triggers.crons, ["*/5 * * * *", CRON]);
+    assert.deepEqual(own.triggers.crons, ["*/5 * * * *", CRON, MINUTE_CRON]);
     // Already current: nothing changes.
     assert.deepEqual(refreshRuntime(next, repoCfg), next);
   });

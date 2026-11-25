@@ -26,6 +26,13 @@ export type ClientType = (typeof CLIENT_TYPES)[number];
 export const MENTION_STATES = ["pending", "claimed", "done", "failed"] as const;
 export type MentionState = (typeof MENTION_STATES)[number];
 
+/**
+ * Where a pending mention is (docs/spec.md "Mention wake-ups"): "sent" while an agent session was
+ * woken for it and has not claimed it yet, "waiting" while no session has it. Null once claimed.
+ */
+export const MENTION_DELIVERIES = ["sent", "waiting"] as const;
+export type MentionDelivery = (typeof MENTION_DELIVERIES)[number];
+
 export const COMMENT_STATUSES = ["open", "resolved"] as const;
 export type CommentStatus = (typeof COMMENT_STATUSES)[number];
 
@@ -117,10 +124,18 @@ export const SENSITIVE_PATH_RULES: readonly SensitivePathRule[] = [
   { kind: "path", value: ".docker/config.json" },
 ];
 
-/** Token scopes. A personal access token or OAuth grant carries a space-separated subset. */
-export const SCOPES = ["artifacts:read", "artifacts:write", "mentions"] as const;
+/**
+ * Token scopes. A personal access token or OAuth grant carries a space-separated subset.
+ * `mentions:watch` is for the mention relay on the user's computer (docs/spec.md "Mention
+ * wake-ups"): it sees that requests wait (task and artifact ids only) and routes them to sessions,
+ * and can't read or claim them. It is never a default and never offered for personal access
+ * tokens (TOKEN_SCOPES).
+ */
+export const SCOPES = ["artifacts:read", "artifacts:write", "mentions", "mentions:watch"] as const;
 export type Scope = (typeof SCOPES)[number];
-export const DEFAULT_SCOPES: readonly Scope[] = SCOPES;
+/** What an agent connection gets when it asks for no scope, and what token dialogs offer. */
+export const TOKEN_SCOPES = ["artifacts:read", "artifacts:write", "mentions"] as const;
+export const DEFAULT_SCOPES: readonly Scope[] = TOKEN_SCOPES;
 
 /**
  * Agent names that `@name` in a comment maps to a client type. `agent:other` covers every client
@@ -409,6 +424,11 @@ export const TTL = {
   oauthCodeMs: 10 * 60 * 1000,
   /** A claimed mention task nobody completed becomes claimable again after this. */
   mentionClaimMs: 30 * 60 * 1000,
+  /**
+   * How long an agent session gets to claim a mention it was woken for before another session's
+   * watch may be offered it (docs/spec.md "Mention wake-ups").
+   */
+  mentionOfferMs: 3 * 60 * 1000,
   oauthAccessTokenS: 60 * 60,
   oauthRefreshTokenS: 90 * 24 * 60 * 60,
   /** An upload ticket from start_upload. */
@@ -420,6 +440,66 @@ export const TTL = {
    * so a commit that landed near the deadline can still be confirmed; the row is deleted after.
    */
   uploadStatusMs: 24 * 60 * 60 * 1000,
+} as const;
+
+/**
+ * Mention wake-ups (docs/spec.md "Mention wake-ups"): watches that bring @mentions to the agent
+ * session that should act on them.
+ */
+export const MENTION_WATCH = {
+  /** How often a client polls a watch (the MCP task's pollIntervalMs, the relay's period). */
+  pollMs: 15_000,
+  /** A watch that has not polled for this long is not live: offers go to another one. */
+  liveMs: 75_000,
+  /**
+   * An MCP task watch ends (completes with a "watch again" result) after this, inside the seven
+   * days Claude follows a task in cloud sessions and chats.
+   */
+  taskLifetimeMs: 6 * 24 * 60 * 60 * 1000,
+  /** The ttlMs an MCP task watch reports: its lifetime plus a day to read the result. */
+  taskTtlMs: 7 * 24 * 60 * 60 * 1000,
+  /** A relay watch nobody polled for this long has ended (its computer is off or the relay quit). */
+  relayIdleMs: 15 * 60 * 1000,
+  /** Wake-ups per mention: after this many unclaimed offers it waits for someone to look. */
+  maxOffers: 3,
+  /** Working MCP task watches per connection; a newer one ends the oldest. */
+  maxTaskWatchesPerConnection: 50,
+  /** Working relay watches per relay connection; a newer one ends the oldest. */
+  maxRelayWatchesPerConnection: 200,
+  /** Watches one relay poll may ask about. */
+  maxPollIds: 100,
+  /** Pending mentions one poll looks at, across the watches it polls (D1 binds 100 values). */
+  maxCandidates: 50,
+  /** Mentions one wake-up hands over. */
+  maxOffersPerWake: 20,
+  /** Watches one connection may start per hour (MCP tasks and relay watches together). */
+  startsPerConnectionPerHour: 300,
+  /** Relay polls one connection may make per ten minutes (every session's monitor counts). */
+  relayPollsPerConnectionPer10Min: 1200,
+} as const;
+
+/** The MCP tasks extension (protocol revision 2026-07-28), as clients and servers name it. */
+export const MCP_TASKS_EXTENSION = "io.modelcontextprotocol/tasks";
+
+/** The MCP events extension (SEP-3415), as clients and servers name it. */
+export const MCP_EVENTS_EXTENSION = "io.modelcontextprotocol/events";
+
+/** MCP Events for mention wake-ups (docs/spec.md "Mention wake-ups"). */
+export const MENTION_EVENTS = {
+  /** A subscription's lifetime when the client suggests none (or no expiry), and its bounds. */
+  defaultTtlMs: 24 * 60 * 60 * 1000,
+  minTtlMs: 60 * 60 * 1000,
+  maxTtlMs: 7 * 24 * 60 * 60 * 1000,
+  /** Live subscriptions per connection. */
+  maxSubscriptionsPerConnection: 20,
+  /** How long a callback stays verified for its connection. */
+  callbackVerifiedMs: 24 * 60 * 60 * 1000,
+  /** One webhook POST's time limit. */
+  timeoutMs: 10_000,
+  /** Deliveries one cron run or one comment sends. */
+  deliveriesPerRun: 50,
+  /** What events/poll suggests between polls. */
+  pollMs: 30_000,
 } as const;
 
 export const RATE_LIMITS = {

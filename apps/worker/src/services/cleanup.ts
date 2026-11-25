@@ -43,6 +43,24 @@ export const ARTIFACT_WIPE: readonly ArtifactWipeStep[] = [
       d1.prepare("DELETE FROM personal_categories WHERE artifact_id = ?1").bind(id),
     ],
   },
+  // Watches on it end (0024_mention_watches): a client polling one hears "cancelled" and stops.
+  {
+    tables: ["mention_watches"],
+    statements: (d1, id, now) => [
+      d1
+        .prepare(
+          "UPDATE mention_watches SET status = 'cancelled', completed_at = ?1 WHERE artifact_id = ?2 AND status = 'working'",
+        )
+        .bind(new Date(now).toISOString(), id),
+    ],
+  },
+  // Event subscriptions filtered to it end: nothing on it will be mentioned again.
+  {
+    tables: ["event_subscriptions"],
+    statements: (d1, id) => [
+      d1.prepare("DELETE FROM event_subscriptions WHERE artifact_id = ?1").bind(id),
+    ],
+  },
   // Tokens limited to the artifact (0012_bound_tokens) are revoked: they can never act again, and
   // the row stays on its person's Connections page until the artifact's erase removes it.
   {

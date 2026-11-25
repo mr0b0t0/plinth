@@ -14,8 +14,8 @@ import {
   type CreatedToken,
   ciWorkflowSnippet,
   LIMITS,
-  SCOPES,
   type Scope,
+  TOKEN_SCOPES,
 } from "@plinth/shared";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { ApiRequestError, api } from "../../lib/api.ts";
@@ -147,7 +147,7 @@ function TokenDialogBody({
 }: Omit<NewTokenDialogProps, "open">) {
   const [label, setLabel] = useState("");
   const [clientType, setClientType] = useState<ClientType>("other");
-  const [scopes, setScopes] = useState<Scope[]>([...SCOPES]);
+  const [scopes, setScopes] = useState<Scope[]>([...TOKEN_SCOPES]);
   // Limited to one artifact: it always reads it, and publishes new versions when `canPublish`.
   const [limited, setLimited] = useState(false);
   const [search, setSearch] = useState("");
@@ -381,7 +381,7 @@ function TokenDialogBody({
               onChange={(e) => setCanPublish(e.target.checked)}
             />
           ) : (
-            SCOPES.map((s) => (
+            TOKEN_SCOPES.map((s) => (
               <Checkbox
                 key={s}
                 label={SCOPE_META[s].label}
@@ -391,7 +391,7 @@ function TokenDialogBody({
                   setScopeError(null);
                   setScopes((cur) =>
                     e.target.checked
-                      ? SCOPES.filter((x) => x === s || cur.includes(x))
+                      ? TOKEN_SCOPES.filter((x) => x === s || cur.includes(x))
                       : cur.filter((x) => x !== s),
                   );
                 }}

@@ -19,6 +19,7 @@ import { canActOnMention, grantedRole, type Principal } from "../policy.ts";
 import { factsOf, requireVersion } from "./artifacts.ts";
 import { authorLabel, insertComment, readAnchor, requireComment } from "./comments.ts";
 import type { Ctx } from "./context.ts";
+import { deliveryOf } from "./mentionWatches.ts";
 
 type AgentPrincipal = Extract<Principal, { kind: "agent" }>;
 
@@ -137,6 +138,7 @@ async function loadTasks(ctx: Ctx, p: AgentPrincipal, where: SQL | undefined, li
               }),
         anchor: readAnchor(r.c.anchor),
         version_number: r.c.versionNumber,
+        delivery: deliveryOf(r.t),
         claimed_by: r.t.claimedBy,
         claimed_at: r.t.claimedAt,
         result_version: r.t.resultVersion,

@@ -121,7 +121,9 @@ reuse by hash](#big-builds-and-reuse-by-hash)). The row's `r2_prefix` is authori
 | `versions` | id, artifact_id, number, r2_prefix, size_bytes, stored_bytes, manifest, created_by (user or agent), note, created_at | Immutable, and written only once its files are in R2 (commit last). A restore creates a new row. `size_bytes` is what a viewer loads; `stored_bytes` is what this version added to R2 (NULL for versions written before 0.4.0, which count `size_bytes`). Each manifest entry has `path`, `size_bytes`, `content_type`, a server-computed `sha256` (absent on files stored before 0.4.0) and, for a reused file, a server-written `stored_at` (`v<m>[.<nonce>]/<path>`, relative to `artifacts/<artifact_id>/`, never returned by the API) |
 | `access_grants` | artifact_id, email, role | Role is viewer, commenter or editor. Used for allowlists and collaborators |
 | `comments` | id, artifact_id, version, parent_id, author, body, mentions, status | Threaded. `status` is open or resolved |
-| `mention_tasks` | id, comment_id, target agent, state, claimed_by, result_version | The queue agents read. State is pending, claimed, done or failed |
+| `mention_tasks` | id, comment_id, target agent, state, claimed_by, result_version, offered_to, offered_until, offer_count, offered_watches | The queue agents read. State is pending, claimed, done or failed. The offer columns say which watch's session was woken for a pending task, until when, and which watches already had it ([Mention wake-ups](#mention-wake-ups-decided-2026-11-25)) |
+| `mention_watches` | id, user_id, connection_id, kind, artifact_id, client_type, status, last_seen_at, expires_at, result | A session waiting for requests: an MCP task (`task`) or a session the mention relay listens for (`relay`) |
+| `event_subscriptions`, `event_deliveries`, `event_callbacks` | subscription key, sealed secret, profile, refresh_before; webhook-id, body, attempts; verified callbacks | MCP Events: `mention.created` subscriptions, their webhook deliveries, and callback URLs a connection proved it controls |
 | `sessions` | id, user or viewer email, expires_at | Login sessions (signing in, and a viewing code confirmed at an allowlist gate or a portal), and viewer sessions where the confirmed address may not sign in (single-user mode) |
 | `reports` | id, artifact_id, reason, reporter, state | Abuse reports |
 
@@ -341,6 +343,7 @@ One remote MCP server over streamable HTTP at `/mcp`. All tools act as the conne
 | `get_artifact_stats(id?, days?)` | Owner only, read-only: who opened one artifact over 7, 30, 90 or 365 days (totals, a daily series, people with their last version seen, opens per version), or without `id` opens and viewers over 7 and 30 days for every artifact the user owns. The people list is the owner's data and must not be passed on |
 | `list_mentions(state?)` | Pending requests addressed to this agent (from `@mentions` in comments) |
 | `claim_mention(task_id)` | Lock a request so two agents do not both act on it |
+| `watch_mentions(artifact_id)` | Watch one of the user's artifacts so comments that mention this agent reach its session ([Mention wake-ups](#mention-wake-ups-decided-2026-11-25)): an MCP task where the client supports them, else a plain answer that it can't be woken |
 | `reply_comment(comment_id, body, result_version?)` | Answer in the thread and mark the task done |
 | `list_comments(id)` | Every comment thread on an artifact, for addressing feedback |
 | `resolve_comment(comment_id, resolved?)` | Resolve or reopen a thread |
@@ -991,7 +994,7 @@ Two delivery modes:
 
 | Mode | How it works | Who pays for tokens | When |
 | --- | --- | --- | --- |
-| Pull | The task waits in a queue. The owner's agent reads it through `list_mentions` in a session or on a schedule, publishes a new version and replies. In Claude Code the plugin's mention watcher (its own `mentions`-only connection) polls every 30 seconds and wakes open sessions when a request arrives | The user's own Claude or Codex subscription | v1 |
+| Pull | The task waits in a queue. The owner's agent reads it through `list_mentions` in a session or on a schedule, publishes a new version and replies. The session that published the artifact is woken for it with no step from the user ([Mention wake-ups](#mention-wake-ups-decided-2026-11-25)): an MCP task it started with `watch_mentions`, the mention relay on the user's computer, or an MCP Events webhook | The user's own Claude, Codex or ChatGPT subscription | v1 |
 | Push | The platform calls the Anthropic or OpenAI API as soon as the mention is posted, with the artifact, the thread and a scoped token | The user's own API key, or a paid plan on the hosted instance | Later |
 
 Rules for both modes: only the owner's connected agents can be mentioned, only commenters and
@@ -3487,6 +3490,95 @@ whoever sends it (only `comment_author_role` says the owner did).
   host or in the frames' sandbox.
 - **No setting.** Asking an agent adds no env var, table or route: it is a mention name, a field on
   the comment route and two gate parts.
+
+### Mention wake-ups (decided 2026-11-25)
+
+A mention reaches the agent session that should act on it with no subscribe step from the user,
+the way Claude's own artifacts watch their comments: publishing an artifact makes the publishing
+session watch it. Every client gets the same server-side queue and routing; each wakes its sessions
+the strongest way it allows. Design notes: `docs/superpowers/specs/2026-11-25-mention-wake-ups.md`.
+
+- **Watches.** A watch is a session waiting for requests (`mention_watches`): a **task** watch, an
+  MCP task an agent starts with `watch_mentions` (protocol revision 2026-07-28, the tasks extension
+  `io.modelcontextprotocol/tasks`), or a **relay** watch, which the mention relay on the user's
+  computer starts for a session in a client without MCP tasks (`POST /api/v1/mention-watches`). A
+  task watch is on one artifact; a relay watch is on one artifact or on every artifact of the user
+  (a session's catch-all). Only the artifact's owner's agents watch it (requests go to them), only a
+  connection that can act on mentions starts a task watch (the `mentions` scope, not limited to one
+  artifact), and a watch hears only the mentions addressed to it: its client type (`@claude`,
+  `@codex`, `@agent:other`) or, for a task watch, its own connection by label.
+- **Routing.** A pending mention is *offered* to one live watch at a time: the best watch that
+  hears it, where a watch on the mention's artifact beats one on every artifact, a task watch beats
+  a relay watch, and the newer beats the older. "Live" means it polled in the last 75 seconds
+  (`MENTION_WATCH.liveMs`). The offer lasts three minutes (`TTL.mentionOfferMs`); if nobody claims
+  the mention by then, the next best watch is offered it. A watch is never offered the same mention
+  twice, and a mention is offered at most three times (`MENTION_WATCH.maxOffers`), then waits for
+  someone to look. Offers are decided when a watch polls (one conditional UPDATE, so two polls
+  never take one mention); nothing runs in the background. `claim_mention` ends it.
+- **What a wake-up carries.** Ids only: mention task ids, the artifact id and fixed sentences the
+  server writes. Never comment text, titles or names. The agent reads the request with
+  `claim_mention`, whose result is marked untrusted, so a collaborator's words never arrive framed
+  as the user's message, in any client.
+- **MCP tasks (Claude).** `publish_artifact` and `update_artifact` add `watch_mentions` (a sentence
+  saying to call it) to their result when the request declared the tasks extension, the connection
+  can take mentions, the caller owns the artifact and no live task watch of this connection is on
+  it. `watch_mentions` answers a client with tasks with a `CreateTaskResult` (`ttlMs` seven days,
+  `pollIntervalMs` 15 seconds); the client polls `tasks/get`, and a completed task wakes an idle
+  session (Claude Code CLI, the Agent SDK with `CLAUDE_AUTO_BACKGROUND_TASKS=1`, VS Code and
+  desktop local sessions on v2.1.331+, cloud sessions and claude.ai chats). It completes with the
+  mentions it was offered and the sentence "call watch_mentions again", or after six days with no
+  requests so the agent starts a new one inside the seven days a client follows a task. A newer
+  task watch of the same connection on the same artifact cancels the older (a client starts no
+  turn for a cancelled task); a connection holds at most 50 (the oldest end). `tasks/get`,
+  `tasks/cancel` and `tasks/update` answer only the connection that started the task (-32602
+  otherwise) and only a request that declares the extension (-32021). In a client without tasks,
+  `watch_mentions` answers that the conversation can't be woken and requests wait in
+  `list_mentions`.
+- **The mention relay.** `plinth-mentions.mjs` in the Claude Code plugin (also the Codex, Cursor,
+  Copilot CLI and Gemini integrations) has one connection per computer and instance, OAuth with
+  the `mentions:watch` scope: it sees that requests wait (task and artifact ids) and routes them,
+  and can neither read nor claim them. The user approves it once, in the browser, the first time a
+  session needs it (a hook tells the agent to run its `login`). Connections made before
+  `mentions:watch` hold `mentions`, which may start relay watches for their own client type only.
+  `mentions:watch` is never a default scope, never offered for personal access tokens in the app,
+  and left out of `scopes_supported` so a client that asks for every listed scope never gets it.
+  Each client's hooks run `plinth-mentions.mjs hook <client> <event>`: at session start the
+  session is registered with a catch-all relay watch, after `publish_artifact` or `update_artifact`
+  it gets a relay watch on that artifact, at session end its watches end. One relay process per
+  computer polls every registered session's watches in one request every 15 seconds and wakes each
+  session its own way: a T3 Code thread (Claude or Codex) with `t3 thread send`, a Codex session
+  with `codex queue --thread` (an idle loaded thread runs it at once, an unloaded one when it is
+  next opened); Cursor, Copilot CLI and Gemini sessions get it at their next stop hook, which asks
+  for one more turn. Claude Code outside T3 starts no relay watches per session (its agent watches
+  with MCP tasks); its plugin monitor keeps one catch-all relay watch per session, which catches
+  requests on artifacts no live session watches. `PLINTH_MENTIONS_TOKEN` gives a computer with no
+  browser a fixed token with `mentions:watch` instead.
+- **MCP Events (ChatGPT).** The server offers the events extension (`io.modelcontextprotocol/events`,
+  SEP-3415) with one event type, `mention.created`, by webhook and by `events/poll`. A client
+  subscribes once (ChatGPT: "watch my Plinth mentions" in a Work chat or a dot), optionally to one
+  of the user's artifacts (`arguments.artifact_id`); Plinth verifies the callback with a signed
+  challenge, keeps the subscription a day by default (between an hour and seven days, refreshed by
+  the client) and POSTs each matching mention as a Standard Webhooks message, signed with the
+  client's `whsec_` secret (sealed at rest under `TOKEN_SIGNING_KEY`). The callback must be `https`
+  on a public host name on the default port, never an IP literal or a local name, and redirects are
+  not followed. Deliveries retry with backoff (one, two, five and ten minutes, by the minute cron);
+  410 and 413 end one. Plinth advertises both the design sketch ChatGPT implements (the top-level
+  `events` capability; `webhook-id` equal to `eventId`; error codes -32011 to -32015) and SEP-3415
+  (the `extensions` entry; a random `webhook-id` per message; -32023 to -32027), answering each
+  request in the dialect it declared. A delivered event marks the mention "sent" like an offer.
+- **Limits.** A connection may start 300 watches an hour (`MENTION_WATCH.startsPerConnectionPerHour`,
+  MCP tasks and relay watches together) and make 1200 relay polls every ten minutes; past either it
+  gets `rate_limited`.
+- **What people see.** A pending request's chip in the thread says `sent` while an agent session
+  has it and `waiting` while none does (`delivery` on comment mentions and mention tasks).
+- **Lifetimes.** A relay watch nobody polls for 15 minutes ends; ended watches and settled
+  deliveries are deleted after a week, lapsed subscriptions after a day (the hourly cron). Deleting
+  or taking down an artifact cancels its watches and deletes its filtered subscriptions; revoking a
+  connection stops its watches and subscriptions at once.
+- **Where nothing can wake a session.** One-shot `claude -p`, Claude Desktop and VS Code before
+  v2.1.331 or with Plinth as a claude.ai connector in a local session, Cursor, Copilot CLI and
+  Gemini between turns, and ChatGPT outside Work chats and dots: requests wait in `list_mentions`,
+  and the chip says `waiting`.
 
 ### New and Import (decided 2026-11-19)
 

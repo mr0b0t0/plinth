@@ -91,6 +91,7 @@ describe("@agent:other in a comment", () => {
         task_id: expect.any(String),
         target: "@agent:other",
         state: "pending",
+        delivery: "waiting",
         result_version: null,
       },
     ]);
@@ -148,7 +149,13 @@ describe("request_to on a new comment", () => {
       const c = await json(res);
       const label = { claude: "@claude", codex: "@codex", other: "@agent:other" }[clientType];
       expect(c.mentions).toEqual([
-        { task_id: expect.any(String), target: label, state: "pending", result_version: null },
+        {
+          task_id: expect.any(String),
+          target: label,
+          state: "pending",
+          delivery: "waiting",
+          result_version: null,
+        },
       ]);
       const tasks = await tasksOf(c.id);
       expect(tasks).toHaveLength(1);
