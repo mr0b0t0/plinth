@@ -506,32 +506,29 @@ setSkillFolder(
 );
 outputs.set(`${CURSOR}/assets/icon.svg`, outputs.get("integrations/plugin/assets/icon.svg"));
 // Cursor finds hooks/hooks.json in a plugin; command hooks run from the plugin folder.
+const CURSOR_ROOT = `\${CURSOR_PLUGIN_ROOT}`;
 relayScripts(CURSOR);
 outputs.set(
   `${CURSOR}/hooks/hooks.json`,
   json({
     version: 1,
     hooks: {
-      sessionStart: [
-        { command: relayHook("${CURSOR_PLUGIN_ROOT}", "cursor", "session-start"), timeout: 15 },
-      ],
+      sessionStart: [{ command: relayHook(CURSOR_ROOT, "cursor", "session-start"), timeout: 15 }],
       postToolUse: [
         {
-          command: relayHook("${CURSOR_PLUGIN_ROOT}", "cursor", "post-tool"),
+          command: relayHook(CURSOR_ROOT, "cursor", "post-tool"),
           matcher: "MCP:(publish_artifact|update_artifact)",
           timeout: 15,
         },
       ],
       stop: [
         {
-          command: relayHook("${CURSOR_PLUGIN_ROOT}", "cursor", "stop"),
+          command: relayHook(CURSOR_ROOT, "cursor", "stop"),
           timeout: 15,
           loop_limit: 3,
         },
       ],
-      sessionEnd: [
-        { command: relayHook("${CURSOR_PLUGIN_ROOT}", "cursor", "session-end"), timeout: 10 },
-      ],
+      sessionEnd: [{ command: relayHook(CURSOR_ROOT, "cursor", "session-end"), timeout: 10 }],
     },
   }),
 );
@@ -553,13 +550,14 @@ outputs.set(
 );
 setSkillFolder(`integrations/gemini/skills/${SKILL_NAME}`, skill);
 // Gemini CLI loads <extension>/hooks/hooks.json (timeouts in milliseconds; ${extensionPath}).
+const GEMINI_ROOT = `\${extensionPath}`;
 relayScripts("integrations/gemini");
 const geminiHook = (event, matcher) => ({
   ...(matcher ? { matcher } : {}),
   hooks: [
     {
       type: "command",
-      command: relayHook("${extensionPath}", "gemini", event),
+      command: relayHook(GEMINI_ROOT, "gemini", event),
       timeout: 15_000,
     },
   ],

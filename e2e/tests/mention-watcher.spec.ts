@@ -159,7 +159,8 @@ test("connects with mentions:watch, announces once, lists waiting requests, noti
   // the result. Presenting a rotated refresh token would revoke the grant, so this must hold.
   const expired = JSON.parse(readFileSync(stateFile, "utf8"));
   writeFileSync(stateFile, JSON.stringify({ ...expired, expires_at: 0 }), { mode: 0o600 });
-  const [r1, r2] = [run("status", env), run("pending", env), run("pending", env)].slice(1);
+  const r1 = run("pending", env);
+  const r2 = run("pending", env);
   expect(await r1.done).toBe(0);
   expect(await r2.done).toBe(0);
   const refreshed = JSON.parse(readFileSync(stateFile, "utf8"));

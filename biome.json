@@ -19,6 +19,7 @@
       "!integrations/plugin-directory/**/*.json",
       "!integrations/plugin-openai/**/*.json",
       "!integrations/plugin-cursor/**/*.json",
+      "!integrations/plugin-codex/**/*.json",
       "!integrations/gemini/**/*.json",
       "!docs/examples/plinth-deck/slides",
       "!.claude-plugin",
@@ -44,7 +45,13 @@
   },
   "overrides": [
     {
-      "includes": ["integrations/watcher/**", "integrations/plugin/scripts/**"],
+      "includes": [
+        "integrations/watcher/**",
+        "integrations/plugin/scripts/**",
+        "integrations/plugin-codex/scripts/**",
+        "integrations/plugin-cursor/scripts/**",
+        "integrations/gemini/scripts/**"
+      ],
       "linter": {
         "rules": {
           "suspicious": {
