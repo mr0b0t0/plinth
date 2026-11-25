@@ -153,11 +153,20 @@
   outline-offset: 0;
   border-color: var(--doc-live, #8f5a2a);
 }
-.plinth-rich__content [contenteditable="true"],
+/* An open block is laid out as the page lays it out, so opening it moves nothing: it wraps as the
+   page does (the page's own overflow-wrap; a code block keeps the page's white-space, so a long
+   line scrolls), and only spaces are kept as typed. A soft line break is a space on the page, and
+   so here (drawText). */
+.plinth-rich__content :not(code)[contenteditable="true"],
 .plinth-rich__content[contenteditable="true"] {
   white-space: pre-wrap;
-  overflow-wrap: anywhere;
+}
+.plinth-rich__content [contenteditable="true"],
+.plinth-rich__content[contenteditable="true"] {
   caret-color: var(--doc-live, #8f5a2a);
+}
+.plinth-rich__soft {
+  white-space: normal;
 }
 .plinth-rich__content p:empty,
 .plinth-rich__content li:empty,
@@ -172,7 +181,9 @@ p.plinth-rich__content:empty::before {
   content: "Write something";
   color: var(--doc-muted, #59636e);
 }
-.plinth-rich__tight {
+/* A tight list item's text, drawn in a paragraph of its own: no paragraph spacing, as on the page
+   (which has none to give it, and spaces loose items' paragraphs with `li > p`). */
+.plinth-rich__content .plinth-rich__tight {
   margin: 0;
 }
 .plinth-rich__atom {

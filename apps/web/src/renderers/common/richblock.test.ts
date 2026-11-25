@@ -60,6 +60,27 @@ describe("RichBlockEditor", () => {
     expect(md(r.model)).toBe("see ![i](a.png) here\\[atom !\\[i\\](a.png)\\]");
   });
 
+  it("draws a soft line break as the page's space and reads it back as the line break", () => {
+    const { r } = make({
+      t: "paragraph",
+      c: [text("one line\nthe next"), { k: "text", text: "bold\nlater", m: { strong: true } }],
+    });
+    const soft = r.editable.querySelectorAll(".plinth-rich__soft");
+    expect(soft).toHaveLength(2);
+    expect(soft[0]?.textContent).toBe("\n");
+    // Untouched, the block reads back as it was: its bytes are kept.
+    expect(md(r.model)).toBe("one line\nthe next**bold\nlater**");
+    // The caret after a soft line break is in the text that follows it, not in its span.
+    r.focus("start");
+    const sel = document.getSelection() as Selection;
+    const after = soft[0]?.nextSibling as Text;
+    caret(after, 0);
+    expect(r.selection()?.from).toEqual({ leaf: 0, offset: 9 });
+    r.setModel(r.model, { leaf: 0, offset: 9 });
+    expect(sel.anchorNode?.parentElement?.classList.contains("plinth-rich__soft")).toBe(false);
+    expect(sel.anchorNode?.nodeValue).toBe("the next");
+  });
+
   it("reads a link back only when this editor drew or set it", () => {
     const { r } = make({ t: "paragraph", c: [text("x")] });
     r.editable.innerHTML = '<a href="https://example.com">y</a>';

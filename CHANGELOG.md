@@ -10,6 +10,11 @@ Add a line under **Unreleased** in the pull request that makes a change people w
 
 ## Unreleased
 
+- **Opening a block to edit it no longer moves the page.** A wide table keeps its columns and
+  scrolls instead of squashing, a paragraph keeps its line breaks where the page had them, a code
+  block keeps scrolling instead of wrapping, and a tight list keeps its spacing, in docs, slides
+  and design systems.
+
 ## 0.8.0 (2026-11-23)
 
 - **Show an artifact in the conversation.** Ask your agent to show, open or bring back a page
