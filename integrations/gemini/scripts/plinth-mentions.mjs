@@ -60,10 +60,10 @@ import {
   readSession,
   relayLoop,
   removeSession,
+  saveSession,
   sessionIdOf,
   sessionsDir,
   startWatch,
-  writeSession,
 } from "./plinth-relay.mjs";
 
 export const CLIENT_NAME = "Plinth mention relay";
@@ -274,12 +274,6 @@ async function pending(oauth) {
       await call("DELETE", `/mention-watches/${w.id}`).catch(() => null);
       const offers = r?.status === 200 ? (r.body?.watches?.[0]?.offers ?? []) : [];
       if (offers.length === 0) return;
-      claimAnnouncements(
-        p,
-        offers.map((o) => o.task_id),
-        Date.now(),
-        new Set(),
-      );
       console.log(nudge(offers));
       return;
     }
@@ -316,6 +310,8 @@ async function watch(oauth) {
   let watchId = null;
   let legacy = false;
   let handlersSet = false;
+  /** Task ids this monitor's watch announced (an open offer comes back on every poll). */
+  const announced = new Set();
   for (;;) {
     try {
       // Again on every poll: the SessionStart hook may save the instance after this started.
@@ -375,16 +371,11 @@ async function watch(oauth) {
         const w = (r.body?.watches ?? [])[0];
         if (w?.status !== "working") watchId = null;
         const offers = w?.offers ?? [];
-        // One line per request per computer: an open offer is handed again on every poll.
-        const fresh = new Set(
-          claimAnnouncements(
-            p,
-            offers.map((o) => o.task_id),
-            Date.now(),
-            new Set(),
-          ),
-        );
-        const now = offers.filter((o) => fresh.has(o.task_id));
+        // An open offer is handed again on every poll: one line per request for this watch. Plinth
+        // never offers a request to the same watch twice, so a later offer to another session's
+        // watch is announced there.
+        const now = offers.filter((o) => !announced.has(o.task_id));
+        for (const o of now) announced.add(o.task_id);
         if (now.length > 0) console.log(nudge(now));
       }
       delay = POLL_MS;
@@ -493,7 +484,7 @@ async function hook(oauth, client, event) {
     if (!artifact) return;
     await watchFor(artifact);
   }
-  writeSession(dir, s);
+  saveSession(dir, s);
   if (s.wake === "t3" || s.wake === "codex") ensureRelay(dir, RELAY_SCRIPT);
 
   // Hand over what this session holds now: at the start (requests that waited), and at a stop in
@@ -508,7 +499,7 @@ async function hook(oauth, client, event) {
       text = [note, nudge(offers)].filter(Boolean).join("\n\n");
       markDelivered(s, offers);
     }
-    writeSession(dir, s);
+    saveSession(dir, s);
   }
   if (event === "stop" && s.wake !== "turn") return;
   out(text);

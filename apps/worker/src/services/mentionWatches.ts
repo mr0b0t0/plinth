@@ -239,24 +239,48 @@ export async function cancelWatch(ctx: Ctx, id: string): Promise<MentionWatchRow
   return { ...w, status: "cancelled", completedAt: now };
 }
 
-/** Pending mentions this watch could be offered now (its own live offers included). */
-async function candidates(ctx: Ctx, w: MentionWatchRow, now: number) {
+/** A pending mention that one of the polling watches might be offered. */
+interface Candidate {
+  id: string;
+  artifactId: string;
+  targetConnection: string | null;
+  targetClientType: MentionWatchRow["clientType"] | null;
+  offeredTo: string | null;
+  offeredUntil: string | null;
+  offeredWatches: string;
+  ownerId: string;
+}
+
+/**
+ * Pending mentions on the user's live artifacts that some of these watches could be offered now:
+ * open ones (no live offer, offers left) addressed to one of their client types or task
+ * connections, and the ones already offered to one of them. One query for any number of watches.
+ */
+async function candidatesFor(
+  ctx: Ctx,
+  userId: string,
+  watches: MentionWatchRow[],
+  now: number,
+): Promise<Candidate[]> {
   const nowIso = iso(now);
-  const target: SQL | undefined =
-    w.kind === "task"
-      ? or(
-          and(
-            isNull(mentionTasks.targetConnection),
-            eq(mentionTasks.targetClientType, w.clientType),
-          ),
-          eq(mentionTasks.targetConnection, w.connectionId),
-        )
-      : and(isNull(mentionTasks.targetConnection), eq(mentionTasks.targetClientType, w.clientType));
-  const mine = and(eq(mentionTasks.offeredTo, w.id), gt(mentionTasks.offeredUntil, nowIso));
+  const types = [...new Set(watches.map((w) => w.clientType))];
+  const taskConnections = [
+    ...new Set(watches.filter((w) => w.kind === "task").map((w) => w.connectionId)),
+  ];
+  const artifactIds = watches.some((w) => w.artifactId === null)
+    ? null
+    : [...new Set(watches.map((w) => w.artifactId as string))];
+  const ids = watches.map((w) => w.id);
+  const target = or(
+    and(isNull(mentionTasks.targetConnection), inArray(mentionTasks.targetClientType, types)),
+    taskConnections.length > 0
+      ? inArray(mentionTasks.targetConnection, taskConnections)
+      : undefined,
+  );
+  const mine = and(inArray(mentionTasks.offeredTo, ids), gt(mentionTasks.offeredUntil, nowIso));
   const open = and(
     or(isNull(mentionTasks.offeredUntil), lt(mentionTasks.offeredUntil, nowIso)),
     lt(mentionTasks.offerCount, MENTION_WATCH.maxOffers),
-    sql`NOT EXISTS (SELECT 1 FROM json_each(${mentionTasks.offeredWatches}) WHERE json_each.value = ${w.id})`,
   );
   return ctx.db
     .select({
@@ -274,16 +298,16 @@ async function candidates(ctx: Ctx, w: MentionWatchRow, now: number) {
     .where(
       and(
         eq(mentionTasks.state, "pending"),
-        eq(artifacts.ownerId, w.userId),
+        eq(artifacts.ownerId, userId),
         isNull(artifacts.deletedAt),
         isNull(artifacts.takenDownAt),
-        w.artifactId ? eq(mentionTasks.artifactId, w.artifactId) : undefined,
+        artifactIds ? inArray(mentionTasks.artifactId, artifactIds) : undefined,
         target,
         or(mine, open),
       ),
     )
     .orderBy(asc(mentionTasks.createdAt), sql`${mentionTasks}.rowid`)
-    .limit(MENTION_WATCH.maxOffersPerWake)
+    .limit(MENTION_WATCH.maxCandidates)
     .all();
 }
 
@@ -314,35 +338,48 @@ async function liveWatches(ctx: Ctx, userId: string, artifactIds: string[], now:
 }
 
 /**
- * Poll one watch: note that it is alive, then take the mentions it is the best live watch for.
- * Returns the offers it holds now (a relay's earlier, still-open offers included, so a relay that
- * restarted mid-delivery gets them again; it announces each task once).
+ * The polling watches (all one user's, just marked seen) take the mentions each is the best live
+ * watch for. Returns each watch's offers now, its earlier still-open ones included (so a relay that
+ * restarted mid-delivery gets them again; it announces each task once). Two queries and one
+ * conditional UPDATE per offer won, whatever the number of watches.
  */
-async function offersFor(ctx: Ctx, w: MentionWatchRow, now: number): Promise<MentionOffer[]> {
-  const found = await candidates(ctx, w, now);
-  if (found.length === 0) return [];
-  const self = { ...w, lastSeenAt: iso(now) };
-  const others = (
-    await liveWatches(ctx, w.userId, [...new Set(found.map((t) => t.artifactId))], now)
-  ).filter((x) => x.id !== w.id);
-  const out: MentionOffer[] = [];
+async function offersForWatches(
+  ctx: Ctx,
+  userId: string,
+  polling: MentionWatchRow[],
+  now: number,
+): Promise<Map<string, MentionOffer[]>> {
+  const out = new Map<string, MentionOffer[]>(polling.map((w) => [w.id, []]));
+  if (polling.length === 0) return out;
+  const found = await candidatesFor(ctx, userId, polling, now);
+  if (found.length === 0) return out;
+  const selves = polling.map((w) => ({ ...w, lastSeenAt: iso(now) }));
+  const byId = new Map<string, MentionWatchRow>(
+    (await liveWatches(ctx, userId, [...new Set(found.map((t) => t.artifactId))], now)).map((w) => [
+      w.id,
+      w,
+    ]),
+  );
+  for (const w of selves) byId.set(w.id, w);
+  const everyone = [...byId.values()];
   for (const t of found) {
-    if (t.offeredTo === w.id && t.offeredUntil && t.offeredUntil > iso(now)) {
-      out.push({ task_id: t.id, artifact_id: t.artifactId });
+    if (t.offeredTo && out.has(t.offeredTo) && t.offeredUntil && t.offeredUntil > iso(now)) {
+      out.get(t.offeredTo)?.push({ task_id: t.id, artifact_id: t.artifactId });
       continue;
     }
     const tried = new Set<string>(JSON.parse(t.offeredWatches) as string[]);
-    const best = [self, ...others]
+    const best = everyone
       .filter((x) => !tried.has(x.id) && watchHears(x, t, t.ownerId))
       .sort(rank)[0];
-    if (best?.id !== w.id) continue;
+    const mine = best ? out.get(best.id) : undefined;
+    if (!best || !mine || mine.length >= MENTION_WATCH.maxOffersPerWake) continue;
     const won = await ctx.db
       .update(mentionTasks)
       .set({
-        offeredTo: w.id,
+        offeredTo: best.id,
         offeredUntil: iso(now + TTL.mentionOfferMs),
         offerCount: sql`${mentionTasks.offerCount} + 1`,
-        offeredWatches: sql`json_insert(${mentionTasks.offeredWatches}, '$[#]', ${w.id})`,
+        offeredWatches: sql`json_insert(${mentionTasks.offeredWatches}, '$[#]', ${best.id})`,
       })
       .where(
         and(
@@ -354,9 +391,32 @@ async function offersFor(ctx: Ctx, w: MentionWatchRow, now: number): Promise<Men
       )
       .returning({ id: mentionTasks.id })
       .get();
-    if (won) out.push({ task_id: t.id, artifact_id: t.artifactId });
+    if (won) mine.push({ task_id: t.id, artifact_id: t.artifactId });
   }
   return out;
+}
+
+/** Undo offers a watch took but could not hand over (it finished meanwhile): as if never made. */
+async function releaseOffers(ctx: Ctx, watchId: string, offers: MentionOffer[]) {
+  if (offers.length === 0) return;
+  await ctx.db
+    .update(mentionTasks)
+    .set({
+      offeredTo: null,
+      offeredUntil: null,
+      offerCount: sql`max(${mentionTasks.offerCount} - 1, 0)`,
+      offeredWatches: sql`(SELECT json_group_array(value) FROM json_each(${mentionTasks.offeredWatches}) WHERE value <> ${watchId})`,
+    })
+    .where(
+      and(
+        inArray(
+          mentionTasks.id,
+          offers.map((o) => o.task_id),
+        ),
+        eq(mentionTasks.offeredTo, watchId),
+      ),
+    )
+    .run();
 }
 
 /** What a finished task watch says, read by tasks/get. */
@@ -382,7 +442,8 @@ function outcomeOf(w: MentionWatchRow): TaskOutcome {
  * tasks/get for a task watch. A working watch takes the mentions it is offered and completes with
  * them; one past its lifetime completes with "ended", so the agent starts a new watch and its
  * client, which follows a task for seven days in cloud sessions and chats, never loses track. A
- * finished watch keeps answering with its outcome.
+ * finished watch keeps answering with its outcome. Two polls of one watch at once (or a cancel in
+ * between) can't lose a mention: only one completes the watch, and the other's offers are undone.
  */
 export async function pollTaskWatch(
   ctx: Ctx,
@@ -394,45 +455,49 @@ export async function pollTaskWatch(
   if (w.status !== "working") return { watch: w, outcome: outcomeOf(w) };
   const now = Date.now();
   if (w.expiresAt <= iso(now)) {
-    const done = await finish(ctx, w, { kind: "ended" }, now);
+    const done = (await finish(ctx, w, { kind: "ended" }, now)) ?? (await ownWatch(ctx, id));
     return { watch: done, outcome: outcomeOf(done) };
   }
   // Seen before offering, so a mention arriving between two polls counts this watch as live.
   await ctx.db
     .update(mentionWatches)
     .set({ lastSeenAt: iso(now) })
-    .where(eq(mentionWatches.id, w.id))
+    .where(and(eq(mentionWatches.id, w.id), eq(mentionWatches.status, "working")))
     .run();
-  const offers = await offersFor(ctx, w, now);
+  const offers = (await offersForWatches(ctx, w.userId, [w], now)).get(w.id) ?? [];
   if (offers.length === 0) return { watch: { ...w, lastSeenAt: iso(now) }, outcome: outcomeOf(w) };
   const done = await finish(ctx, w, { kind: "offers", offers }, now);
-  return { watch: done, outcome: outcomeOf(done) };
+  if (done) return { watch: done, outcome: outcomeOf(done) };
+  await releaseOffers(ctx, w.id, offers);
+  const current = await ownWatch(ctx, id);
+  return { watch: current, outcome: outcomeOf(current) };
 }
 
+/** Complete a working watch with its result; null when it was no longer working. */
 async function finish(
   ctx: Ctx,
   w: MentionWatchRow,
   result: { kind: "offers"; offers: MentionOffer[] } | { kind: "ended" },
   now: number,
-): Promise<MentionWatchRow> {
-  const set = {
-    status: "completed" as const,
-    completedAt: iso(now),
-    lastSeenAt: iso(now),
-    result: JSON.stringify(result),
-  };
-  await ctx.db
+): Promise<MentionWatchRow | null> {
+  const row = await ctx.db
     .update(mentionWatches)
-    .set(set)
+    .set({
+      status: "completed",
+      completedAt: iso(now),
+      lastSeenAt: iso(now),
+      result: JSON.stringify(result),
+    })
     .where(and(eq(mentionWatches.id, w.id), eq(mentionWatches.status, "working")))
-    .run();
-  return { ...w, ...set };
+    .returning()
+    .get();
+  return row ?? null;
 }
 
 /**
- * POST /api/v1/mention-watches/poll: the relay's watches, one request per round. Each working
- * watch is kept alive (its expiry slides) and handed its offers; ended ones say so, and ids that
- * are not this connection's are left out.
+ * POST /api/v1/mention-watches/poll: the relay's watches, one request per round. Working watches
+ * are kept alive (their expiry slides) and handed their offers; ended ones say so, and ids that are
+ * not this connection's are left out. A fixed number of queries whatever the number of watches.
  */
 export async function pollRelayWatches(ctx: Ctx, ids: string[]): Promise<MentionWatchPoll[]> {
   const p = requireAgent(ctx);
@@ -443,41 +508,74 @@ export async function pollRelayWatches(ctx: Ctx, ids: string[]): Promise<Mention
     600,
     "Too many polls; try again later",
   );
+  // D1 binds at most 100 values per statement: a few dozen watches per round of queries.
+  const unique = [...new Set(ids)];
+  const out: MentionWatchPoll[] = [];
+  for (let i = 0; i < unique.length; i += POLL_CHUNK) {
+    out.push(...(await pollRelayChunk(ctx, p, unique.slice(i, i + POLL_CHUNK))));
+  }
+  return out;
+}
+
+/** Watches per round of queries in a relay poll: under D1's limit of bound values. */
+const POLL_CHUNK = 25;
+
+async function pollRelayChunk(
+  ctx: Ctx,
+  p: AgentPrincipal,
+  ids: string[],
+): Promise<MentionWatchPoll[]> {
   const rows = await ctx.db
     .select()
     .from(mentionWatches)
     .where(
       and(
-        inArray(mentionWatches.id, [...new Set(ids)]),
+        inArray(mentionWatches.id, ids),
         eq(mentionWatches.connectionId, p.connectionId ?? ""),
         eq(mentionWatches.kind, "relay"),
       ),
     )
     .all();
   const now = Date.now();
-  const out: MentionWatchPoll[] = [];
-  for (const w of rows) {
-    if (w.status !== "working") {
-      out.push({ id: w.id, status: w.status, offers: [] });
-      continue;
-    }
-    if (w.expiresAt <= iso(now)) {
-      await ctx.db
-        .update(mentionWatches)
-        .set({ status: "expired", completedAt: iso(now) })
-        .where(and(eq(mentionWatches.id, w.id), eq(mentionWatches.status, "working")))
-        .run();
-      out.push({ id: w.id, status: "expired", offers: [] });
-      continue;
-    }
+  const lapsed = rows.filter((w) => w.status === "working" && w.expiresAt <= iso(now));
+  const live = rows.filter((w) => w.status === "working" && w.expiresAt > iso(now));
+  if (lapsed.length > 0) {
+    await ctx.db
+      .update(mentionWatches)
+      .set({ status: "expired", completedAt: iso(now) })
+      .where(
+        and(
+          inArray(
+            mentionWatches.id,
+            lapsed.map((w) => w.id),
+          ),
+          eq(mentionWatches.status, "working"),
+        ),
+      )
+      .run();
+  }
+  if (live.length > 0) {
     await ctx.db
       .update(mentionWatches)
       .set({ lastSeenAt: iso(now), expiresAt: iso(now + MENTION_WATCH.relayIdleMs) })
-      .where(eq(mentionWatches.id, w.id))
+      .where(
+        and(
+          inArray(
+            mentionWatches.id,
+            live.map((w) => w.id),
+          ),
+          eq(mentionWatches.status, "working"),
+        ),
+      )
       .run();
-    out.push({ id: w.id, status: "working", offers: await offersFor(ctx, w, now) });
   }
-  return out;
+  const offers = await offersForWatches(ctx, p.userId, live, now);
+  const lapsedIds = new Set(lapsed.map((w) => w.id));
+  return rows.map((w) => ({
+    id: w.id,
+    status: lapsedIds.has(w.id) ? "expired" : w.status,
+    offers: offers.get(w.id) ?? [],
+  }));
 }
 
 /**
@@ -508,14 +606,34 @@ export async function hasLiveTaskWatch(
 
 /**
  * Housekeeping (the cleanup cron): working watches past their expiry end (a task nobody polled
- * before its lifetime ran out; a relay silent for MENTION_WATCH.relayIdleMs), and ended ones go a
- * week later, long past the hour a client may still read a finished task's result.
+ * before its lifetime ran out completes with "ended"; a relay silent for MENTION_WATCH.relayIdleMs
+ * expires), and ended ones go a week later, long past the hour a client may still read a finished
+ * task's result.
  */
 export async function sweepMentionWatches(ctx: Pick<Ctx, "db">, now = Date.now()) {
+  // A task watch ends as it would on a poll, with "watch again", so a client that comes back
+  // later (a laptop that slept) still starts a new one.
+  await ctx.db
+    .update(mentionWatches)
+    .set({ status: "completed", completedAt: iso(now), result: JSON.stringify({ kind: "ended" }) })
+    .where(
+      and(
+        eq(mentionWatches.kind, "task"),
+        eq(mentionWatches.status, "working"),
+        lt(mentionWatches.expiresAt, iso(now)),
+      ),
+    )
+    .run();
   await ctx.db
     .update(mentionWatches)
     .set({ status: "expired", completedAt: iso(now) })
-    .where(and(eq(mentionWatches.status, "working"), lt(mentionWatches.expiresAt, iso(now))))
+    .where(
+      and(
+        eq(mentionWatches.kind, "relay"),
+        eq(mentionWatches.status, "working"),
+        lt(mentionWatches.expiresAt, iso(now)),
+      ),
+    )
     .run();
   await ctx.db
     .delete(mentionWatches)

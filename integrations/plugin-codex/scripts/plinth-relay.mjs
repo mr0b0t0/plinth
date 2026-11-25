@@ -40,6 +40,8 @@ const RELAY_IDLE_EXIT_MS = 30 * 60_000;
 /** A session nobody's hooks touched for this long is forgotten. */
 const SESSION_FORGET_MS = 7 * 24 * 60 * 60_000;
 const MAX_STDIN = 4 * 1024 * 1024;
+/** Watches per poll request (MENTION_WATCH.maxPollIds on the server). */
+const POLL_BATCH = 100;
 
 /** The clients a hook can name, and how each is woken and whose mentions it hears. */
 export const CLIENTS = {
@@ -203,6 +205,35 @@ export function writeSession(dir, s) {
   renameSync(tmp, file);
 }
 
+/**
+ * Save a session, merged with what is on disk now: hooks and the relay process write the same
+ * file, so watches are combined, delivered is the union of both, and offered drops what either
+ * delivered. Returns what was written.
+ */
+export function saveSession(dir, s) {
+  const current = readSession(dir, s.client, s.session_id);
+  if (!current) {
+    writeSession(dir, s);
+    return s;
+  }
+  const delivered = [...new Set([...current.delivered, ...s.delivered])].slice(-200);
+  const done = new Set(delivered);
+  const offered = [];
+  for (const o of [...current.offered, ...s.offered]) {
+    if (!done.has(o.task_id) && !offered.some((x) => x.task_id === o.task_id)) offered.push(o);
+  }
+  const merged = {
+    ...current,
+    ...s,
+    watches: { ...current.watches, ...s.watches },
+    delivered,
+    offered,
+    connect_noted: current.connect_noted || s.connect_noted || undefined,
+  };
+  writeSession(dir, merged);
+  return merged;
+}
+
 export function listSessions(dir) {
   let names = [];
   try {
@@ -303,14 +334,14 @@ export async function pollSessions(call, sessions) {
   for (const s of sessions) ids.push(...Object.values(s.watches));
   if (ids.length === 0) return new Map();
   const fresh = new Map();
-  for (let i = 0; i < ids.length; i += 200) {
-    const r = await call("POST", "/mention-watches/poll", { ids: ids.slice(i, i + 200) });
+  for (let i = 0; i < ids.length; i += POLL_BATCH) {
+    const r = await call("POST", "/mention-watches/poll", { ids: ids.slice(i, i + POLL_BATCH) });
     if (r?.status !== 200) throw new Error(`Plinth answered ${r?.status ?? "nothing"}`);
     const byId = new Map((r.body?.watches ?? []).map((w) => [w.id, w]));
     for (const s of sessions) {
       for (const [artifact, wid] of Object.entries(s.watches)) {
         const w = byId.get(wid);
-        if (!w && !ids.slice(i, i + 200).includes(wid)) continue;
+        if (!w && !ids.slice(i, i + POLL_BATCH).includes(wid)) continue;
         if (w?.status !== "working") {
           // Ended (expired, the artifact deleted, the relay off for a while): start it again.
           const again = await startWatch(call, s, artifact === "*" ? null : artifact);
@@ -427,22 +458,21 @@ export async function relayRound(call, dir, { now = Date.now(), run = spawnSync 
       removeSession(dir, s.client, s.session_id);
       continue;
     }
+    // Only sessions the relay can wake: the others (Cursor, Copilot, Gemini) poll from their own
+    // hooks, so a closed one stops taking offers.
+    if (s.wake !== "t3" && s.wake !== "codex") continue;
     if (s.pid && !alive(s.pid)) continue;
     live.push(s);
   }
   const fresh = await pollSessions(call, live);
   for (const s of live) {
-    const offers = fresh.get(s) ?? [];
-    if (offers.length > 0 && (s.wake === "t3" || s.wake === "codex")) {
-      if (wake(s, nudge(offers), run)) markDelivered(s, offers);
-    }
-    // Re-read before writing: a hook may have added a watch while this round ran.
+    // A hook may have handed some of these over while the poll ran: skip what it delivered.
     const current = readSession(dir, s.client, s.session_id);
     if (!current) continue;
-    current.watches = { ...current.watches, ...s.watches };
-    current.offered = s.offered;
-    current.delivered = s.delivered;
-    writeSession(dir, current);
+    const done = new Set(current.delivered);
+    const offers = (fresh.get(s) ?? []).filter((o) => !done.has(o.task_id));
+    if (offers.length > 0 && wake(s, nudge(offers), run)) markDelivered(s, offers);
+    saveSession(dir, s);
   }
   return live.length;
 }

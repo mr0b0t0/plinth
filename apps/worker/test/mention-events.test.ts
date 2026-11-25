@@ -351,3 +351,97 @@ describe("mention.created over MCP Events", () => {
     expect(again.result.events).toEqual([]);
   });
 });
+
+describe("review fixes", () => {
+  it("a refresh with the same secret is not a rotation; a new one is signed alongside the old for a day", async () => {
+    const s = await setup();
+    const r = receiver();
+    const a = await rpc(s.token, "events/subscribe", sub());
+    await rpc(s.token, "events/subscribe", sub());
+    let row = await db()
+      .select()
+      .from(eventSubscriptions)
+      .where(eq(eventSubscriptions.id, a.result.id))
+      .get();
+    expect(row?.previousSecret).toBeNull();
+    const KEY2 = new Uint8Array(32).map((_, i) => 100 + i);
+    const SECRET2 = `whsec_${btoa(String.fromCharCode(...KEY2))}`;
+    await rpc(s.token, "events/subscribe", {
+      ...sub(),
+      delivery: { mode: "webhook", url: CALLBACK, secret: SECRET2 },
+    });
+    row = await db()
+      .select()
+      .from(eventSubscriptions)
+      .where(eq(eventSubscriptions.id, a.result.id))
+      .get();
+    expect(row?.previousSecret).not.toBeNull();
+    await comment(s.owner.headers, s.art.id, "@agent:other signed twice");
+    await settle();
+    const [ev] = r.events();
+    const sigs = (ev?.headers["webhook-signature"] ?? "").split(" ");
+    expect(sigs).toHaveLength(2);
+    const id = ev?.headers["webhook-id"] ?? "";
+    const ts = Number(ev?.headers["webhook-timestamp"]);
+    expect(sigs[0]).toBe(await signWebhook([KEY2], id, ts, ev?.body ?? ""));
+    expect(sigs[1]).toBe(await signWebhook([KEY], id, ts, ev?.body ?? ""));
+  });
+
+  it("a delivery whose secret can't be opened is abandoned, not retried at the head of the queue", async () => {
+    const s = await setup();
+    receiver(503);
+    const a = await rpc(s.token, "events/subscribe", sub());
+    await comment(s.owner.headers, s.art.id, "@agent:other x");
+    await settle();
+    await db()
+      .update(eventSubscriptions)
+      .set({ secret: "AAAA" })
+      .where(eq(eventSubscriptions.id, a.result.id))
+      .run();
+    await deliverDue({ db: db(), config: config() }, Date.now() + 61_000);
+    const d = await db()
+      .select()
+      .from(eventDeliveries)
+      .where(eq(eventDeliveries.subscriptionId, a.result.id))
+      .get();
+    expect(d).toMatchObject({ nextAttemptAt: null, lastError: "secret_unreadable" });
+  });
+
+  it("events/poll filters by recipient in the query and pages through mentions that share a time", async () => {
+    const s = await setup();
+    const first = await rpc(
+      s.token,
+      "events/poll",
+      { name: "mention.created", arguments: {}, cursor: null },
+      true,
+    );
+    await new Promise((r) => setTimeout(r, 5));
+    // Many mentions for another agent first: they never fill a page.
+    for (let i = 0; i < 4; i++) await comment(s.owner.headers, s.art.id, `@codex ${i}`);
+    // One comment, two tasks for this connection (by type and by label): one creation time.
+    await comment(s.owner.headers, s.art.id, "@agent:other and @chatgpt both");
+    const p1 = await rpc(
+      s.token,
+      "events/poll",
+      { name: "mention.created", arguments: {}, cursor: first.result.cursor, maxEvents: 1 },
+      true,
+    );
+    expect(p1.result.events).toHaveLength(1);
+    expect(p1.result.hasMore).toBe(true);
+    const p2 = await rpc(
+      s.token,
+      "events/poll",
+      { name: "mention.created", arguments: {}, cursor: p1.result.cursor, maxEvents: 1 },
+      true,
+    );
+    expect(p2.result.events).toHaveLength(1);
+    expect(p2.result.events[0].data.task_id).not.toBe(p1.result.events[0].data.task_id);
+    const p3 = await rpc(
+      s.token,
+      "events/poll",
+      { name: "mention.created", arguments: {}, cursor: p2.result.cursor, maxEvents: 1 },
+      true,
+    );
+    expect(p3.result.events).toEqual([]);
+  });
+});

@@ -18,7 +18,9 @@ import {
   newSession,
   nudge,
   publishedArtifact,
+  readSession,
   relayRound,
+  saveSession,
   sessionIdOf,
   wakeOf,
   writeSession,
@@ -346,5 +348,43 @@ describe("the hook and relay commands", () => {
         "utf8",
       ).includes('"delivered"'),
     );
+  });
+
+  it("merges a hook's and the relay's writes to one session instead of overwriting", () => {
+    const dir = path.join(work, "merge");
+    const s = newSession("codex", "m-1", {});
+    s.watches = { "*": "w1" };
+    s.offered = [{ task_id: "t1", artifact_id: "a" }];
+    writeSession(dir, s);
+    // A hook delivers t1 while the relay holds a stale copy that still has it offered.
+    const hook = readSession(dir, "codex", "m-1");
+    markDelivered(hook, hook.offered);
+    saveSession(dir, hook);
+    const relay = {
+      ...s,
+      offered: [...s.offered, { task_id: "t2", artifact_id: "a" }],
+      watches: { "*": "w1", a: "w2" },
+    };
+    const merged = saveSession(dir, relay);
+    assert.deepEqual(merged.delivered, ["t1"]);
+    assert.deepEqual(
+      merged.offered.map((o) => o.task_id),
+      ["t2"],
+    );
+    assert.deepEqual(merged.watches, { "*": "w1", a: "w2" });
+  });
+
+  it("the relay polls only sessions it can wake; Cursor, Copilot and Gemini poll from their hooks", async () => {
+    const dir = path.join(work, "only-wakeable");
+    const cur = newSession("cursor", "c-9", {});
+    cur.watches = { "*": "mw_turn" };
+    writeSession(dir, cur);
+    const seen = [];
+    const call = async (method, url, body) => {
+      seen.push(body?.ids ?? []);
+      return { status: 200, body: { watches: [] } };
+    };
+    await relayRound(call, dir, { run: () => ({ status: 0 }) });
+    assert.deepEqual(seen.flat(), []);
   });
 });

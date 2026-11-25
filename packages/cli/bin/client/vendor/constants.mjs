@@ -451,9 +451,15 @@ export const MENTION_WATCH = {
   /** Working relay watches per relay connection; a newer one ends the oldest. */
   maxRelayWatchesPerConnection: 200,
   /** Watches one relay poll may ask about. */
-  maxPollIds: 200,
+  maxPollIds: 100,
+  /** Pending mentions one poll looks at, across the watches it polls (D1 binds 100 values). */
+  maxCandidates: 50,
   /** Mentions one wake-up hands over. */
   maxOffersPerWake: 20,
+  /** Watches one connection may start per hour (MCP tasks and relay watches together). */
+  startsPerConnectionPerHour: 300,
+  /** Relay polls one connection may make per ten minutes (every session's monitor counts). */
+  relayPollsPerConnectionPer10Min: 1200,
 };
 
 /** The MCP tasks extension (protocol revision 2026-07-28), as clients and servers name it. */

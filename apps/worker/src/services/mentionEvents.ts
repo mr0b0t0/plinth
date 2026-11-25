@@ -328,6 +328,21 @@ async function verifyCallback(
     .run();
 }
 
+/** A subscription's sealed secret, opened; null when it can't be (TOKEN_SIGNING_KEY changed). */
+async function openSecret(
+  ctx: Pick<Ctx, "config">,
+  subscriptionId: string,
+  sealed: string,
+): Promise<Uint8Array | null> {
+  const opened = (await openJson(
+    ctx.config.tokenSigningKey,
+    SECRET_INFO,
+    subscriptionId,
+    sealed,
+  )) as { k?: string } | null;
+  return opened?.k ? fromBase64url(opened.k) : null;
+}
+
 /** The TTL a subscription gets: the client's suggestion within [min, max], else the default. */
 function grantTtl(raw: unknown): number {
   if (typeof raw !== "number" || !Number.isFinite(raw)) return MENTION_EVENTS.defaultTtlMs;
@@ -388,7 +403,9 @@ export async function subscribe(ctx: Ctx, params: SubscribeParams, profile: Even
   });
   const refreshBefore = iso(now + grantTtl(params.ttlMs));
   if (existing) {
-    const rotated = existing.secret !== sealed;
+    // Sealing uses a fresh IV, so compare the keys themselves: only a new key is a rotation.
+    const before = await openSecret(ctx, id, existing.secret);
+    const rotated = !before || base64url(before) !== base64url(key);
     await ctx.db
       .update(eventSubscriptions)
       .set({
@@ -602,17 +619,21 @@ export async function deliverDue(
       continue;
     }
     const keys: Uint8Array[] = [];
-    for (const sealed of [
-      s.secret,
-      s.previousUntil && s.previousUntil > iso(now) ? s.previousSecret : null,
-    ]) {
-      if (!sealed) continue;
-      const opened = (await openJson(ctx.config.tokenSigningKey, SECRET_INFO, s.id, sealed)) as {
-        k?: string;
-      } | null;
-      if (opened?.k) keys.push(fromBase64url(opened.k));
+    const previous = s.previousUntil && s.previousUntil > iso(now) ? s.previousSecret : null;
+    for (const sealed of [s.secret, previous]) {
+      const key = sealed ? await openSecret(ctx, s.id, sealed) : null;
+      if (key) keys.push(key);
     }
-    if (keys.length === 0) continue;
+    if (keys.length === 0) {
+      // Sealed under a TOKEN_SIGNING_KEY this instance no longer has: nothing can sign it, so it
+      // is abandoned rather than left at the head of the queue. The client's next refresh reseals.
+      await ctx.db
+        .update(eventDeliveries)
+        .set({ nextAttemptAt: null, lastError: "secret_unreadable" })
+        .where(eq(eventDeliveries.id, d.id))
+        .run();
+      continue;
+    }
     const r = await post(s.url, keys, d.id, s.id, d.body);
     const attempts = d.attempts + 1;
     if (r.ok) {
@@ -664,9 +685,20 @@ export async function deliverDue(
   }
 }
 
+/** A poll cursor: the last mention handed, as its creation time and id (several share a time). */
+function encodeCursor(createdAt: string, id: string) {
+  return `${createdAt}|${id}`;
+}
+function decodeCursor(c: string): { at: string; id: string } | null {
+  const [at, id = ""] = c.split("|");
+  if (!at || Number.isNaN(Date.parse(at)) || !/^[a-z0-9]{0,64}$/.test(id)) return null;
+  return { at, id };
+}
+
 /**
  * events/poll (SEP-3415, for clients without a public callback): pending mentions this connection
- * hears, created after the cursor. A null cursor starts from now.
+ * hears, after the cursor, in creation order. A null cursor starts from now. The recipient filter
+ * is in SQL, so a page never fills up with other agents' mentions.
  */
 export async function pollEvents(
   ctx: Ctx,
@@ -675,26 +707,25 @@ export async function pollEvents(
   const p = requireEventsAgent(ctx);
   if (params.name !== MENTION_CREATED.name) throw new EventsError("NotFound", { kind: "event" });
   const { artifactId } = await parseArguments(ctx, p, params.arguments);
-  const now = iso(Date.now());
+  const nowIso = iso(Date.now());
   if (params.cursor === null || params.cursor === undefined) {
     return {
       events: [],
-      cursor: now,
+      cursor: encodeCursor(nowIso, ""),
       truncated: false,
       hasMore: false,
       nextPollMs: MENTION_EVENTS.pollMs,
     };
   }
-  if (typeof params.cursor !== "string" || Number.isNaN(Date.parse(params.cursor))) {
-    throw new EventsError("InvalidParams", { reason: "Unknown cursor" });
-  }
+  const cursor = typeof params.cursor === "string" ? decodeCursor(params.cursor) : null;
+  if (!cursor) throw new EventsError("InvalidParams", { reason: "Unknown cursor" });
   const max = Math.min(Math.max(Number(params.maxEvents) || 50, 1), 100);
   const conn = await ctx.db
     .select()
     .from(agentConnections)
     .where(eq(agentConnections.id, p.connectionId as string))
     .get();
-  if (!conn) throw new EventsError("Forbidden", { reason: "Connection gone" });
+  if (!conn || conn.revokedAt) throw new EventsError("Forbidden", { reason: "Connection gone" });
   const rows = await ctx.db
     .select({ t: mentionTasks, slug: artifacts.slug })
     .from(mentionTasks)
@@ -705,22 +736,31 @@ export async function pollEvents(
         isNull(artifacts.deletedAt),
         isNull(artifacts.takenDownAt),
         eq(mentionTasks.state, "pending"),
-        gt(mentionTasks.createdAt, params.cursor),
+        or(
+          and(
+            isNull(mentionTasks.targetConnection),
+            eq(mentionTasks.targetClientType, conn.clientType),
+          ),
+          eq(mentionTasks.targetConnection, conn.id),
+        ),
+        or(
+          gt(mentionTasks.createdAt, cursor.at),
+          and(eq(mentionTasks.createdAt, cursor.at), gt(mentionTasks.id, cursor.id)),
+        ),
         artifactId ? eq(mentionTasks.artifactId, artifactId) : undefined,
       ),
     )
-    .orderBy(asc(mentionTasks.createdAt))
+    .orderBy(asc(mentionTasks.createdAt), asc(mentionTasks.id))
     .limit(max + 1)
     .all();
-  const heard = rows.filter((r) => hears({ artifactId, connectionId: conn.id }, conn, r.t));
-  const page = heard.slice(0, max);
-  const cursor = page.length > 0 ? (page[page.length - 1]?.t.createdAt ?? now) : params.cursor;
+  const page = rows.slice(0, max);
+  const last = page[page.length - 1];
   return {
     events: page.map((r) => {
       const { cursor: _c, ...o } = occurrence(r.t.id, r.t, ctx.config.appOrigin, r.slug);
       return o;
     }),
-    cursor,
+    cursor: last ? encodeCursor(last.t.createdAt, last.t.id) : params.cursor,
     truncated: false,
     hasMore: rows.length > max,
     nextPollMs: MENTION_EVENTS.pollMs,

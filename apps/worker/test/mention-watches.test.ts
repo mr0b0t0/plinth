@@ -520,7 +520,8 @@ describe("relay watches (the mention relay on the user's computer)", () => {
       .run();
     await sweepMentionWatches({ db: db() });
     const row = await db().select().from(mentionWatches).where(eq(mentionWatches.id, task)).get();
-    expect(row?.status).toBe("expired");
+    // A task ends with "watch again", so a client that polls later still starts a new one.
+    expect(row?.status).toBe("completed");
     await sweepMentionWatches({ db: db() }, Date.now() + 8 * 24 * 60 * 60 * 1000);
     expect(
       await db().select().from(mentionWatches).where(eq(mentionWatches.id, task)).get(),
@@ -541,5 +542,63 @@ describe("relay watches (the mention relay on the user's computer)", () => {
       .all();
     expect(working.filter((w) => w.status === "working")).toHaveLength(3);
     expect(MENTION_WATCH.maxTaskWatchesPerConnection).toBeGreaterThan(3);
+  });
+});
+
+describe("races and lifetimes (review fixes)", () => {
+  it("two polls of one task watch at once never strand a mention on it", async () => {
+    const s = await setup();
+    const w = await startWatch(s.token, s.art.id);
+    await comment(s.owner.headers, s.art.id, "@claude one");
+    await comment(s.owner.headers, s.art.id, "@claude two");
+    const [a, b] = await Promise.all([getTask(s.token, w), getTask(s.token, w)]);
+    const results = [a, b].filter((r) => r.result.status === "completed");
+    expect(results.length).toBeGreaterThan(0);
+    const reported = new Set<string>(
+      JSON.parse(results[0]?.result.result.content[0].text).mention_tasks.map(
+        (o: { task_id: string }) => o.task_id,
+      ),
+    );
+    const tasks = await db()
+      .select()
+      .from(mentionTasks)
+      .where(eq(mentionTasks.artifactId, s.art.id))
+      .all();
+    for (const t of tasks) {
+      // Offered to this watch only if the watch's result says so; otherwise free for the next one.
+      if (t.offeredTo === w) expect(reported.has(t.id)).toBe(true);
+      else expect(t.offeredTo).toBeNull();
+    }
+  });
+
+  it("a task watch the sweep ends still tells the agent to watch again", async () => {
+    const s = await setup();
+    const w = await startWatch(s.token, s.art.id);
+    await db()
+      .update(mentionWatches)
+      .set({ expiresAt: new Date(Date.now() - 1000).toISOString() })
+      .where(eq(mentionWatches.id, w))
+      .run();
+    await sweepMentionWatches({ db: db() });
+    const r = await getTask(s.token, w);
+    expect(r.result.status).toBe("completed");
+    expect(JSON.parse(r.result.result.content[0].text).next).toContain("watch_mentions");
+  });
+
+  it("one relay poll covers 100 watches", async () => {
+    const s = await setup();
+    const relay = await createToken(s.user.id, { clientType: "claude", scopes: "mentions:watch" });
+    const ids: string[] = [];
+    for (let i = 0; i < 100; i++) {
+      ids.push(
+        (await relayWatch(relay.token, { artifact_id: s.art.id, client_type: "claude" })).body.id,
+      );
+    }
+    await comment(s.owner.headers, s.art.id, "@claude to the newest");
+    const polled = await pollRelay(relay.token, ids);
+    expect(polled).toHaveLength(100);
+    expect(polled.flatMap((p) => p.offers)).toHaveLength(1);
+    // The newest watch got it.
+    expect(polled.find((p) => p.offers.length === 1)?.id).toBe(ids[99]);
   });
 });
