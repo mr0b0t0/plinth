@@ -16,20 +16,20 @@
     "admin": "node scripts/admin.mjs"
   },
   "dependencies": {
-    "@cloudflare/puppeteer": "2.0.0",
+    "@cloudflare/puppeteer": "2.0.1",
     "@modelcontextprotocol/server": "2.4.0",
     "@plinth/shared": "workspace:*",
     "drizzle-orm": "0.45.4",
-    "hono": "4.13.18",
-    "tldts": "7.5.2",
+    "hono": "4.13.19",
+    "tldts": "7.5.5",
     "zod": "4.6.7"
   },
   "devDependencies": {
-    "@cloudflare/vitest-plugin": "1.8.2",
+    "@cloudflare/vitest-plugin": "1.9.0",
     "@modelcontextprotocol/client": "2.4.0",
     "drizzle-kit": "0.31.11",
     "typescript": "7.0.2",
-    "vitest": "5.1.0",
-    "wrangler": "4.162.0"
+    "vitest": "5.1.1",
+    "wrangler": "4.166.0"
   }
 }
